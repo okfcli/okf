@@ -1,0 +1,17 @@
+# Binaries
+bin/
+/okf
+*.exe
+
+# Test artifacts
+*.out
+coverage.html
+
+# Editor
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Environment
+.env
