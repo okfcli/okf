@@ -22,11 +22,14 @@ make build
 ## Usage
 
 ```bash
-okf validate ./bundles/ga4       # validate against the OKF spec
-okf lint ./my-bundle              # warnings only (recommended fields)
-okf index ./my-bundle             # generate index.md files (progressive disclosure)
-okf graph ./bundles/stackoverflow # cross-link graph statistics
-okf list ./my-bundle              # list all concepts
+okf validate ./bundles/ga4           # validate against the OKF spec
+okf lint ./my-bundle                  # warnings only (recommended fields)
+okf index ./my-bundle                 # generate index.md files (progressive disclosure)
+okf graph ./bundles/stackoverflow     # cross-link graph statistics
+okf list ./my-bundle                  # list all concepts
+okf enrich --source postgres \        # enrich a bundle from a database using an LLM
+  --dsn "postgres://user:***@localhost/mydb" \
+  --out ./bundles/mydb
 okf version
 ```
 
@@ -59,6 +62,42 @@ Builds the cross-link graph and prints statistics: node count, edge count, isola
 ### `okf list <bundle>`
 
 Lists all concepts in the bundle with their ID, type, and title.
+
+### `okf enrich --source <type> --dsn <conn> --out <dir>`
+
+The agentic command. Ingests metadata from a data source, sends each concept
+through an LLM to produce an OKF concept document, writes the documents to an
+output bundle, and validates the result. Outputs a JSON report.
+
+**Model-agnostic** — works with any OpenAI-compatible LLM provider:
+- OpenAI: `--base-url https://api.openai.com/v1 --api-key sk-... --model gpt-4o`
+- OpenRouter: `--base-url https://openrouter.ai/api/v1 --api-key sk-... --model anthropic/claude-sonnet-4`
+- Ollama (local): `--base-url http://localhost:11434/v1 --model llama3.2` (no API key needed)
+- Any OpenAI-compatible endpoint
+
+**Sources:**
+- `postgres` — introspects a PostgreSQL database via `information_schema`, one concept per table (columns, types, PKs, FKs)
+
+**Example:**
+```bash
+okf enrich --source postgres \
+  --dsn "postgres://user:***@localhost:5432/mydb?sslmode=disable" \
+  --out ./bundles/mydb \
+  --model gpt-4o \
+  --trace
+```
+
+Output is a JSON report:
+```json
+{
+  "source": "postgres",
+  "total": 42,
+  "enriched": 42,
+  "errors": 0,
+  "results": [{"id": "public.users", "status": "ok", "file": "public_users.md"}],
+  "validation": {"errors": 0, "warnings": 3}
+}
+```
 
 ## What is OKF?
 
