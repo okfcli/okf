@@ -1,21 +1,21 @@
 // Command okf is a CLI toolkit for the Open Knowledge Format (OKF).
 // It validates, lints, indexes, and inspects OKF bundles.
 //
-// okf is designed agentic-first: every command supports --json for
-// machine-readable output, and `okf schema` emits a complete machine-readable
-// description of every command, its flags, args, and output format.
+// okf is designed agentic-first: all output is JSON on stdout by default,
+// `okf schema` emits a complete machine-readable description of every command,
+// and all errors are emitted as JSON envelopes with stable exit codes.
 // An external AI agent can discover and drive the entire CLI from that one
 // command.
 package main
 
 import (
 	"encoding/json"
-	"flag"
 	"fmt"
 	"os"
 	"strings"
 
 	"github.com/okfcli/okf/internal/bundle"
+	"github.com/okfcli/okf/internal/cerr"
 	"github.com/okfcli/okf/internal/graph"
 	"github.com/okfcli/okf/internal/index"
 	"github.com/okfcli/okf/internal/validate"
@@ -35,7 +35,7 @@ func main() {
 
 	switch cmd {
 	case "version", "--version", "-v":
-		fmt.Printf("okf %s\n", version)
+		outputJSON(map[string]any{"name": "okf", "version": version})
 	case "help", "--help", "-h":
 		printUsage()
 	case "schema":
@@ -51,123 +51,111 @@ func main() {
 	case "list":
 		runList(rest)
 	default:
-		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", cmd)
-		printUsage()
-		os.Exit(2)
+		exitErr(cerr.Usage("unknown command: %s", cmd))
 	}
 }
 
 const usage = `okf — Open Knowledge Format toolkit (v%s)
 
 Usage:
-  okf <command> [--json] <bundle-path>
+  okf <command> <bundle-path>
+
+All output is JSON on stdout. Diagnostics go to stderr.
 
 Commands:
   schema [command]            Print machine-readable CLI metadata as JSON
-  validate [--json] <bundle>  Validate a bundle against the OKF spec
-  lint [--json] <bundle>      Check recommended fields and style (warnings only)
-  index [--json] <bundle>     Generate index.md files (progressive disclosure)
-  graph [--json] <bundle>     Print cross-link graph statistics
-  list [--json] <bundle>      List all concepts in the bundle
+  validate <bundle>           Validate a bundle against the OKF spec
+  lint <bundle>               Check recommended fields and style (warnings only)
+  index <bundle>              Generate index.md files (progressive disclosure)
+  graph <bundle>              Print cross-link graph statistics
+  list <bundle>               List all concepts in the bundle
   version                     Print version
 
-All commands accept --json for structured, machine-readable output.
-Run ` + "`okf schema`" + ` for a complete machine-readable description of every
-command, its flags, arguments, and output format.
+Exit codes:
+  0  success
+  1  validation error (spec violation, broken link, bad input)
+  2  filesystem or I/O error
+  3  internal error (unexpected)
+  4  usage error (missing args, unknown command)
 
 OKF spec: https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md
 `
 
 func printUsage() {
-	fmt.Printf(usage, version)
+	fmt.Fprintf(os.Stderr, usage, version)
 }
 
 // --- shared helpers ---
-
-func mustBundle(args []string) (*bundle.Bundle, []string) {
-	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "error: bundle path required")
-		os.Exit(2)
-	}
-	b, err := bundle.Load(args[0])
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
-	return b, args[1:]
-}
-
-func parseJSONFlag(args []string) (jsonMode bool, rest []string) {
-	rest = make([]string, 0, len(args))
-	for _, a := range args {
-		if a == "--json" || a == "-j" {
-			jsonMode = true
-			continue
-		}
-		rest = append(rest, a)
-	}
-	return
-}
 
 func outputJSON(v any) {
 	out, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: marshal: %v\n", err)
-		os.Exit(1)
+		os.Exit(cerr.ExitCodeInternal)
 	}
 	fmt.Println(string(out))
+}
+
+// exitErr prints a structured JSON error envelope to stdout and exits with
+// the mapped exit code.
+func exitErr(err error) {
+	e := cerr.From(err)
+	if e == nil {
+		os.Exit(0)
+	}
+	b, _ := e.ToJSON()
+	fmt.Println(string(b))
+	fmt.Fprintf(os.Stderr, "error[%s]: %s\n", e.Kind, e.Message)
+	os.Exit(e.ExitCode())
+}
+
+func mustBundle(args []string) *bundle.Bundle {
+	if len(args) == 0 {
+		exitErr(cerr.Usage("bundle path required"))
+	}
+	b, err := bundle.Load(args[0])
+	if err != nil {
+		exitErr(cerr.IO(err, "load bundle %s", args[0]))
+	}
+	return b
 }
 
 // --- validate / lint ---
 
 func runValidate(args []string, strict bool) {
-	jsonMode, rest := parseJSONFlag(args)
-	b, _ := mustBundle(rest)
+	if len(args) == 0 {
+		exitErr(cerr.Usage("bundle path required"))
+	}
+	b, err := bundle.Load(args[0])
+	if err != nil {
+		exitErr(cerr.IO(err, "load bundle %s", args[0]))
+	}
 	r := validate.Validate(b)
 
-	if jsonMode {
-		findings := make([]map[string]any, 0, len(r.Findings))
-		for _, f := range r.Findings {
-			if !strict && f.Severity == validate.SeverityError {
-				continue
-			}
-			findings = append(findings, map[string]any{
-				"concept_id": f.ConceptID,
-				"severity":   f.Severity.String(),
-				"message":    f.Message,
-			})
-		}
-		outputJSON(map[string]any{
-			"command":  map[string]string{"name": commandName(strict)},
-			"bundle":   b.Root,
-			"findings": findings,
-			"errors":   r.Errors,
-			"warnings": r.Warnings,
-			"valid":    !r.HasErrors(),
-		})
-		if strict && r.HasErrors() {
-			os.Exit(1)
-		}
-		return
-	}
-
-	// human-readable
-	if len(r.Findings) == 0 {
-		fmt.Printf("✓ bundle valid — %d concepts, 0 errors, 0 warnings\n", len(b.Concepts))
-		return
-	}
+	findings := make([]map[string]any, 0, len(r.Findings))
 	for _, f := range r.Findings {
 		if !strict && f.Severity == validate.SeverityError {
 			continue
 		}
-		fmt.Printf("  %s  %s: %s\n", f.Severity, f.ConceptID, f.Message)
+		findings = append(findings, map[string]any{
+			"concept_id": f.ConceptID,
+			"severity":   f.Severity.String(),
+			"message":    f.Message,
+		})
 	}
-	summary := fmt.Sprintf("%d errors, %d warnings", r.Errors, r.Warnings)
+
+	outputJSON(map[string]any{
+		"command":  commandName(strict),
+		"bundle":   b.Root,
+		"findings": findings,
+		"errors":   r.Errors,
+		"warnings": r.Warnings,
+		"valid":    !r.HasErrors(),
+	})
+
 	if strict && r.HasErrors() {
-		fmt.Fprintf(os.Stderr, "\n✗ FAIL — %s\n", summary)
-		os.Exit(1)
+		os.Exit(cerr.ExitCodeValidation)
 	}
-	fmt.Printf("\n✓ %s\n", summary)
 }
 
 func commandName(strict bool) string {
@@ -180,115 +168,87 @@ func commandName(strict bool) string {
 // --- index ---
 
 func runIndex(args []string) {
-	jsonMode, rest := parseJSONFlag(args)
-	if len(rest) == 0 {
-		fmt.Fprintln(os.Stderr, "error: bundle path required")
-		os.Exit(2)
+	if len(args) == 0 {
+		exitErr(cerr.Usage("bundle path required"))
 	}
-	root := rest[0]
+	root := args[0]
 	if err := index.Generate(root); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		exitErr(cerr.IO(err, "generate index in %s", root))
 	}
 
-	// Count generated index files for JSON output.
+	// Collect generated index file paths.
 	var indexFiles []string
 	b, err := bundle.Load(root)
 	if err == nil {
 		for _, r := range b.Reserved {
-			if strings.HasSuffix(r.ID, "index") || r.ID == "index" {
+			if r.ID == "index" || strings.HasSuffix(r.ID, "/index") {
 				indexFiles = append(indexFiles, r.Path)
 			}
 		}
 	}
 
-	if jsonMode {
-		outputJSON(map[string]any{
-			"command":        map[string]string{"name": "index"},
-			"bundle":         root,
-			"indexes_written": indexFiles,
-			"count":          len(indexFiles),
-		})
-		return
-	}
-	fmt.Printf("✓ index.md files generated in %s\n", root)
+	outputJSON(map[string]any{
+		"command":         "index",
+		"bundle":          root,
+		"indexes_written": indexFiles,
+		"count":           len(indexFiles),
+	})
 }
 
 // --- graph ---
 
 func runGraph(args []string) {
-	jsonMode, rest := parseJSONFlag(args)
-	b, _ := mustBundle(rest)
+	b := mustBundle(args)
 	g := graph.Build(b)
 	s := g.Stats()
 
-	if jsonMode {
-		density := 0.0
-		if s.NodeCount > 1 && s.EdgeCount > 0 {
-			density = float64(s.EdgeCount) / float64(s.NodeCount*(s.NodeCount-1)) * 100
-		}
-		nodes := make([]map[string]string, 0, len(g.Nodes))
-		for _, n := range g.Nodes {
-			nodes = append(nodes, map[string]string{"id": n.ID, "type": n.Type})
-		}
-		edges := make([]map[string]string, 0, len(g.Edges))
-		for _, e := range g.Edges {
-			edges = append(edges, map[string]string{"from": e.From, "to": e.To})
-		}
-		outputJSON(map[string]any{
-			"command":      map[string]string{"name": "graph"},
-			"bundle":       b.Root,
-			"nodes":        nodes,
-			"edges":        edges,
-			"node_count":   s.NodeCount,
-			"edge_count":   s.EdgeCount,
-			"isolated":     s.IsolatedNodes,
-			"max_backlinks": s.MaxBacklinks,
-			"density_pct":  density,
-		})
-		return
+	density := 0.0
+	if s.NodeCount > 1 && s.EdgeCount > 0 {
+		density = float64(s.EdgeCount) / float64(s.NodeCount*(s.NodeCount-1)) * 100
 	}
-	fmt.Print(g.Summary())
+
+	nodes := make([]map[string]string, 0, len(g.Nodes))
+	for _, n := range g.Nodes {
+		nodes = append(nodes, map[string]string{"id": n.ID, "type": n.Type})
+	}
+	edges := make([]map[string]string, 0, len(g.Edges))
+	for _, e := range g.Edges {
+		edges = append(edges, map[string]string{"from": e.From, "to": e.To})
+	}
+
+	outputJSON(map[string]any{
+		"command":       "graph",
+		"bundle":        b.Root,
+		"nodes":         nodes,
+		"edges":         edges,
+		"node_count":    s.NodeCount,
+		"edge_count":    s.EdgeCount,
+		"isolated":      s.IsolatedNodes,
+		"max_backlinks": s.MaxBacklinks,
+		"density_pct":   density,
+	})
 }
 
 // --- list ---
 
 func runList(args []string) {
-	jsonMode, rest := parseJSONFlag(args)
-	b, _ := mustBundle(rest)
+	b := mustBundle(args)
 
-	if jsonMode {
-		concepts := make([]map[string]string, 0, len(b.Concepts))
-		for _, c := range b.Concepts {
-			concepts = append(concepts, map[string]string{
-				"id":    c.ID,
-				"type":  c.Frontmatter.Type,
-				"title": c.Frontmatter.Title,
-			})
-		}
-		outputJSON(map[string]any{
-			"command":  map[string]string{"name": "list"},
-			"bundle":   b.Root,
-			"concepts": concepts,
-			"count":    len(b.Concepts),
-		})
-		return
-	}
-
-	if len(b.Concepts) == 0 {
-		fmt.Println("(no concepts found)")
-		return
-	}
-	fmt.Printf("%-50s  %-20s  %s\n", "ID", "TYPE", "TITLE")
-	fmt.Println(strings.Repeat("-", 90))
+	concepts := make([]map[string]string, 0, len(b.Concepts))
 	for _, c := range b.Concepts {
-		title := c.Frontmatter.Title
-		if len(title) > 30 {
-			title = title[:27] + "..."
-		}
-		fmt.Printf("%-50s  %-20s  %s\n", c.ID, c.Frontmatter.Type, title)
+		concepts = append(concepts, map[string]string{
+			"id":    c.ID,
+			"type":  c.Frontmatter.Type,
+			"title": c.Frontmatter.Title,
+		})
 	}
-	fmt.Printf("\n%d concepts\n", len(b.Concepts))
+
+	outputJSON(map[string]any{
+		"command":  "list",
+		"bundle":   b.Root,
+		"concepts": concepts,
+		"count":    len(b.Concepts),
+	})
 }
 
 // --- schema ---
@@ -325,27 +285,15 @@ type schemaRoot struct {
 	Version     string          `json:"version"`
 	Description string          `json:"description"`
 	Commands    []schemaCommand `json:"commands"`
-	ExitCodes   []exitCodeDoc   `json:"exit_codes"`
-}
-
-type exitCodeDoc struct {
-	Code        int    `json:"code"`
-	Description string `json:"description"`
-}
-
-var exitCodeDocs = []exitCodeDoc{
-	{0, "success"},
-	{1, "validation errors found (validate) or runtime error"},
-	{2, "usage error (missing args, unknown command)"},
+	ExitCodes   []cerr.ExitCodeDoc `json:"exit_codes"`
 }
 
 func runSchema(args []string) {
 	// `okf schema <command>` describes a single command.
-	if len(args) > 0 && args[0] != "--json" && args[0] != "-j" {
+	if len(args) > 0 {
 		cmd := findSchemaCommand(args[0])
 		if cmd == nil {
-			fmt.Fprintf(os.Stderr, "error: unknown command %q\n", args[0])
-			os.Exit(2)
+			exitErr(cerr.Usage("unknown command %q", args[0]))
 		}
 		outputJSON(cmd)
 		return
@@ -359,86 +307,65 @@ func buildSchemaRoot() schemaRoot {
 		Version:     version,
 		Description: "Go CLI toolkit for the Open Knowledge Format (OKF)",
 		Commands:    allSchemaCommands(),
-		ExitCodes:   exitCodeDocs,
+		ExitCodes:   cerr.ExitCodeDocs,
 	}
 }
 
 func allSchemaCommands() []schemaCommand {
-	jsonFlag := schemaFlag{Name: "json", Short: "j", Type: "bool", Default: "false", Description: "output structured JSON instead of human-readable text"}
 	return []schemaCommand{
 		{
-			Name:  "schema",
-			Short: "Print machine-readable CLI metadata as JSON",
-			Long:  "Outputs a JSON document describing every command, its flags, arguments, output format, and exit codes. Pass a command name to describe just that command.",
-			Flags: nil,
-			Args: []schemaArg{
-				{Name: "command", Required: false},
-			},
-			Stdout:    "json",
-			ExitCodes: []int{0, 2},
+			Name:   "schema",
+			Short:  "Print machine-readable CLI metadata as JSON",
+			Long:   "Outputs a JSON document describing every command, its flags, arguments, output format, and exit codes. Pass a command name to describe just that command.",
+			Args:   []schemaArg{{Name: "command", Required: false}},
+			Stdout: "json",
+			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeUsage},
 		},
 		{
-			Name:  "validate",
-			Short: "Validate a bundle against the OKF spec",
-			Long:  "Checks every concept for required frontmatter (type), recommended fields (title, description, tags), non-empty body, and valid cross-links.",
-			Flags: []schemaFlag{jsonFlag},
-			Args: []schemaArg{
-				{Name: "bundle", Required: true},
-			},
-			Stdout:    "text|json",
-			ExitCodes: []int{0, 1, 2},
+			Name:   "validate",
+			Short:  "Validate a bundle against the OKF spec",
+			Long:   "Checks every concept for required frontmatter (type), recommended fields (title, description, tags), non-empty body, and valid cross-links. Exits 1 if any errors are found.",
+			Args:   []schemaArg{{Name: "bundle", Required: true}},
+			Stdout: "json",
+			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeValidation, cerr.ExitCodeIO, cerr.ExitCodeUsage},
 		},
 		{
-			Name:  "lint",
-			Short: "Check recommended fields and style (warnings only)",
-			Long:  "Same checks as validate but only emits warnings — errors are suppressed. Exits 0 even with warnings.",
-			Flags: []schemaFlag{jsonFlag},
-			Args: []schemaArg{
-				{Name: "bundle", Required: true},
-			},
-			Stdout:    "text|json",
-			ExitCodes: []int{0, 2},
+			Name:   "lint",
+			Short:  "Check recommended fields and style (warnings only)",
+			Long:   "Same checks as validate but only emits warnings — errors are suppressed. Exits 0 even with warnings.",
+			Args:   []schemaArg{{Name: "bundle", Required: true}},
+			Stdout: "json",
+			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeIO, cerr.ExitCodeUsage},
 		},
 		{
-			Name:  "index",
-			Short: "Generate index.md files (progressive disclosure)",
-			Long:  "Writes index.md into every directory containing concept documents, providing progressive disclosure per OKF spec §6.",
-			Flags: []schemaFlag{jsonFlag},
-			Args: []schemaArg{
-				{Name: "bundle", Required: true},
-			},
-			Stdout:    "text|json",
-			ExitCodes: []int{0, 1, 2},
+			Name:   "index",
+			Short:  "Generate index.md files (progressive disclosure)",
+			Long:   "Writes index.md into every directory containing concept documents, providing progressive disclosure per OKF spec §6.",
+			Args:   []schemaArg{{Name: "bundle", Required: true}},
+			Stdout: "json",
+			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeIO, cerr.ExitCodeUsage},
 		},
 		{
-			Name:  "graph",
-			Short: "Print cross-link graph statistics",
-			Long:  "Builds the directed cross-link graph from concept markdown links and prints summary statistics (nodes, edges, isolated concepts, density).",
-			Flags: []schemaFlag{jsonFlag},
-			Args: []schemaArg{
-				{Name: "bundle", Required: true},
-			},
-			Stdout:    "text|json",
-			ExitCodes: []int{0, 1, 2},
+			Name:   "graph",
+			Short:  "Print cross-link graph statistics",
+			Long:   "Builds the directed cross-link graph from concept markdown links and prints nodes, edges, and summary statistics.",
+			Args:   []schemaArg{{Name: "bundle", Required: true}},
+			Stdout: "json",
+			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeIO, cerr.ExitCodeUsage},
 		},
 		{
-			Name:  "list",
-			Short: "List all concepts in the bundle",
-			Long:  "Lists every concept document with its ID, type, and title.",
-			Flags: []schemaFlag{jsonFlag},
-			Args: []schemaArg{
-				{Name: "bundle", Required: true},
-			},
-			Stdout:    "text|json",
-			ExitCodes: []int{0, 1, 2},
+			Name:   "list",
+			Short:  "List all concepts in the bundle",
+			Long:   "Lists every concept document with its ID, type, and title.",
+			Args:   []schemaArg{{Name: "bundle", Required: true}},
+			Stdout: "json",
+			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeIO, cerr.ExitCodeUsage},
 		},
 		{
-			Name:      "version",
-			Short:     "Print version",
-			Flags:     nil,
-			Args:      nil,
-			Stdout:    "text",
-			ExitCodes: []int{0},
+			Name:   "version",
+			Short:  "Print version",
+			Stdout: "json",
+			ExitCodes: []int{cerr.ExitCodeOK},
 		},
 	}
 }
@@ -451,6 +378,3 @@ func findSchemaCommand(name string) *schemaCommand {
 	}
 	return nil
 }
-
-// silence unused import warning for flag (used transitively for future expansion).
-var _ = flag.NewFlagSet
