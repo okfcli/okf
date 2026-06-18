@@ -4,6 +4,24 @@ A Go CLI toolkit for the [Open Knowledge Format (OKF)](https://github.com/Google
 
 `okf` validates, lints, indexes, and inspects OKF bundles. One static binary, no runtime dependencies, fast enough to validate millions of concepts.
 
+## Agentic-first design
+
+`okf` is designed to be driven by external AI agents, not to call AI internally. Two mechanisms make this possible:
+
+1. **`okf schema`** — emits a complete machine-readable description of every command: its name, description, flags, arguments, output format, and exit codes. An AI agent runs this once and knows the entire CLI surface.
+
+2. **`--json` flag on every command** — every command that produces output supports `--json` for structured, machine-parseable JSON. No screen-scraping required.
+
+```bash
+# An AI agent discovers the CLI:
+okf schema
+
+# Then drives it:
+okf validate --json ./my-bundle
+okf list --json ./my-bundle
+okf graph --json ./my-bundle
+```
+
 ## Install
 
 ```bash
@@ -22,20 +40,24 @@ make build
 ## Usage
 
 ```bash
-okf validate ./bundles/ga4           # validate against the OKF spec
-okf lint ./my-bundle                  # warnings only (recommended fields)
-okf index ./my-bundle                 # generate index.md files (progressive disclosure)
-okf graph ./bundles/stackoverflow     # cross-link graph statistics
-okf list ./my-bundle                  # list all concepts
-okf enrich --source postgres \        # enrich a bundle from a database using an LLM
-  --dsn "postgres://user:***@localhost/mydb" \
-  --out ./bundles/mydb
+okf schema                     # machine-readable CLI metadata (JSON)
+okf schema validate            # describe a single command (JSON)
+okf validate ./bundles/ga4     # validate against the OKF spec
+okf validate --json ./bundles  # structured JSON output
+okf lint ./my-bundle           # warnings only (recommended fields)
+okf index ./my-bundle          # generate index.md files (progressive disclosure)
+okf graph ./bundles/so         # cross-link graph statistics
+okf list ./my-bundle           # list all concepts
 okf version
 ```
 
 ## Commands
 
-### `okf validate <bundle>`
+### `okf schema [command]`
+
+Prints machine-readable CLI metadata as JSON. With no argument, describes every command. With a command name, describes just that command. This is the entry point for AI agents discovering the CLI.
+
+### `okf validate [--json] <bundle>`
 
 Checks a bundle against the OKF spec:
 - **Required fields**: every concept must have a `type` in its frontmatter (OKF §4.1)
@@ -44,60 +66,24 @@ Checks a bundle against the OKF spec:
 
 Exits with code 1 if any errors are found.
 
-### `okf lint <bundle>`
+### `okf lint [--json] <bundle>`
 
 Checks recommended fields and style (warnings only, no errors):
 - `title`, `description`, `tags` are recommended per OKF §4.1
 - Non-empty body with structural markdown per OKF §4.2
 - Timestamp sanity checks
 
-### `okf index <bundle>`
+### `okf index [--json] <bundle>`
 
 Generates `index.md` files in every directory containing concepts. Each index lists the concepts in that directory (with title, type, description) and links to subdirectory indexes. This implements the progressive disclosure pattern from OKF §6 — agents and humans navigate one level at a time instead of loading the entire bundle.
 
-### `okf graph <bundle>`
+### `okf graph [--json] <bundle>`
 
-Builds the cross-link graph and prints statistics: node count, edge count, isolated nodes, max backlinks, and graph density.
+Builds the cross-link graph and prints statistics: node count, edge count, isolated nodes, max backlinks, and graph density. With `--json`, emits the full node/edge lists.
 
-### `okf list <bundle>`
+### `okf list [--json] <bundle>`
 
 Lists all concepts in the bundle with their ID, type, and title.
-
-### `okf enrich --source <type> --dsn <conn> --out <dir>`
-
-The agentic command. Ingests metadata from a data source, sends each concept
-through an LLM to produce an OKF concept document, writes the documents to an
-output bundle, and validates the result. Outputs a JSON report.
-
-**Model-agnostic** — works with any OpenAI-compatible LLM provider:
-- OpenAI: `--base-url https://api.openai.com/v1 --api-key sk-... --model gpt-4o`
-- OpenRouter: `--base-url https://openrouter.ai/api/v1 --api-key sk-... --model anthropic/claude-sonnet-4`
-- Ollama (local): `--base-url http://localhost:11434/v1 --model llama3.2` (no API key needed)
-- Any OpenAI-compatible endpoint
-
-**Sources:**
-- `postgres` — introspects a PostgreSQL database via `information_schema`, one concept per table (columns, types, PKs, FKs)
-
-**Example:**
-```bash
-okf enrich --source postgres \
-  --dsn "postgres://user:***@localhost:5432/mydb?sslmode=disable" \
-  --out ./bundles/mydb \
-  --model gpt-4o \
-  --trace
-```
-
-Output is a JSON report:
-```json
-{
-  "source": "postgres",
-  "total": 42,
-  "enriched": 42,
-  "errors": 0,
-  "results": [{"id": "public.users", "status": "ok", "file": "public_users.md"}],
-  "validation": {"errors": 0, "warnings": 3}
-}
-```
 
 ## What is OKF?
 
@@ -142,12 +128,11 @@ The format is intentionally minimal: no schema registry, no central authority, n
 
 ## Project Status
 
-Early development. The CLI surface (validate, lint, index, graph, list) is functional. Planned:
+Early development. The CLI surface (schema, validate, lint, index, graph, list) is functional. Planned:
 
 - `okf serve` — local HTTP server to browse a bundle interactively
 - `okf render` — export a bundle as a self-contained HTML file (like the Python visualizer)
 - OKF library package (`okf-go`) for embedding in Go applications
-- Source connectors (PostgreSQL, OpenAPI, dbt) to generate OKF from existing systems
 
 ## License
 

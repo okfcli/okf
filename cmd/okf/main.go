@@ -1,9 +1,14 @@
 // Command okf is a CLI toolkit for the Open Knowledge Format (OKF).
 // It validates, lints, indexes, and inspects OKF bundles.
+//
+// okf is designed agentic-first: every command supports --json for
+// machine-readable output, and `okf schema` emits a complete machine-readable
+// description of every command, its flags, args, and output format.
+// An external AI agent can discover and drive the entire CLI from that one
+// command.
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -11,52 +16,17 @@ import (
 	"strings"
 
 	"github.com/okfcli/okf/internal/bundle"
-	"github.com/okfcli/okf/internal/enrich"
 	"github.com/okfcli/okf/internal/graph"
 	"github.com/okfcli/okf/internal/index"
-	"github.com/okfcli/okf/internal/llm"
-	"github.com/okfcli/okf/internal/source"
 	"github.com/okfcli/okf/internal/validate"
-
-	// Source drivers — register via init().
-	_ "github.com/okfcli/okf/internal/source/postgres"
 )
 
 var version = "dev"
 
-const usage = `okf — Open Knowledge Format toolkit (v%s)
-
-Usage:
-  okf <command> [flags] <bundle-path>
-
-Commands:
-  validate <bundle>           Validate a bundle against the OKF spec
-  lint <bundle>               Check recommended fields and style (warnings only)
-  index <bundle>              Generate index.md files (progressive disclosure)
-  graph <bundle>              Print cross-link graph statistics
-  list <bundle>               List all concepts in the bundle
-  enrich --source <type>      Enrich a bundle from a data source using an LLM
-    --dsn <conn-string>
-    --out <bundle-dir>
-    [--base-url <url>]        LLM API endpoint (default: https://api.openai.com/v1)
-    [--api-key <key>]         LLM API key (or set OKF_API_KEY / OPENAI_API_KEY)
-    [--model <model>]         LLM model name (default: gpt-4o)
-    [--max <N>]               Cap number of concepts to enrich
-    [--trace]                 Emit per-concept progress to stderr
-  version                     Print version
-
-Examples:
-  okf validate ./bundles/ga4
-  okf enrich --source postgres --dsn "postgres://user:***@localhost/mydb" --out ./bundles/mydb
-  okf enrich --source postgres --dsn "$DATABASE_URL" --out ./bundles/mydb --model llama3.2 --base-url http://localhost:11434/v1
-
-OKF spec: https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md
-`
-
 func main() {
 	args := os.Args[1:]
 	if len(args) == 0 {
-		fmt.Printf(usage, version)
+		printUsage()
 		os.Exit(0)
 	}
 
@@ -66,10 +36,10 @@ func main() {
 	switch cmd {
 	case "version", "--version", "-v":
 		fmt.Printf("okf %s\n", version)
-		return
 	case "help", "--help", "-h":
-		fmt.Printf(usage, version)
-		return
+		printUsage()
+	case "schema":
+		runSchema(rest)
 	case "validate":
 		runValidate(rest, true)
 	case "lint":
@@ -80,16 +50,41 @@ func main() {
 		runGraph(rest)
 	case "list":
 		runList(rest)
-	case "enrich":
-		runEnrich(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", cmd)
-		fmt.Printf(usage, version)
+		printUsage()
 		os.Exit(2)
 	}
 }
 
-func mustBundle(args []string) *bundle.Bundle {
+const usage = `okf — Open Knowledge Format toolkit (v%s)
+
+Usage:
+  okf <command> [--json] <bundle-path>
+
+Commands:
+  schema [command]            Print machine-readable CLI metadata as JSON
+  validate [--json] <bundle>  Validate a bundle against the OKF spec
+  lint [--json] <bundle>      Check recommended fields and style (warnings only)
+  index [--json] <bundle>     Generate index.md files (progressive disclosure)
+  graph [--json] <bundle>     Print cross-link graph statistics
+  list [--json] <bundle>      List all concepts in the bundle
+  version                     Print version
+
+All commands accept --json for structured, machine-readable output.
+Run ` + "`okf schema`" + ` for a complete machine-readable description of every
+command, its flags, arguments, and output format.
+
+OKF spec: https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md
+`
+
+func printUsage() {
+	fmt.Printf(usage, version)
+}
+
+// --- shared helpers ---
+
+func mustBundle(args []string) (*bundle.Bundle, []string) {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "error: bundle path required")
 		os.Exit(2)
@@ -99,26 +94,74 @@ func mustBundle(args []string) *bundle.Bundle {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
-	return b
+	return b, args[1:]
 }
 
+func parseJSONFlag(args []string) (jsonMode bool, rest []string) {
+	rest = make([]string, 0, len(args))
+	for _, a := range args {
+		if a == "--json" || a == "-j" {
+			jsonMode = true
+			continue
+		}
+		rest = append(rest, a)
+	}
+	return
+}
+
+func outputJSON(v any) {
+	out, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: marshal: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println(string(out))
+}
+
+// --- validate / lint ---
+
 func runValidate(args []string, strict bool) {
-	b := mustBundle(args)
+	jsonMode, rest := parseJSONFlag(args)
+	b, _ := mustBundle(rest)
 	r := validate.Validate(b)
 
-	if len(r.Findings) == 0 {
-		conceptCount := len(b.Concepts)
-		fmt.Printf("✓ bundle valid — %d concepts, 0 errors, 0 warnings\n", conceptCount)
+	if jsonMode {
+		findings := make([]map[string]any, 0, len(r.Findings))
+		for _, f := range r.Findings {
+			if !strict && f.Severity == validate.SeverityError {
+				continue
+			}
+			findings = append(findings, map[string]any{
+				"concept_id": f.ConceptID,
+				"severity":   f.Severity.String(),
+				"message":    f.Message,
+			})
+		}
+		outputJSON(map[string]any{
+			"command":  map[string]string{"name": commandName(strict)},
+			"bundle":   b.Root,
+			"findings": findings,
+			"errors":   r.Errors,
+			"warnings": r.Warnings,
+			"valid":    !r.HasErrors(),
+		})
+		if strict && r.HasErrors() {
+			os.Exit(1)
+		}
 		return
 	}
 
+	// human-readable
+	if len(r.Findings) == 0 {
+		fmt.Printf("✓ bundle valid — %d concepts, 0 errors, 0 warnings\n", len(b.Concepts))
+		return
+	}
 	for _, f := range r.Findings {
 		if !strict && f.Severity == validate.SeverityError {
-			continue // lint mode: warnings only
+			continue
 		}
 		fmt.Printf("  %s  %s: %s\n", f.Severity, f.ConceptID, f.Message)
 	}
-
 	summary := fmt.Sprintf("%d errors, %d warnings", r.Errors, r.Warnings)
 	if strict && r.HasErrors() {
 		fmt.Fprintf(os.Stderr, "\n✗ FAIL — %s\n", summary)
@@ -127,26 +170,111 @@ func runValidate(args []string, strict bool) {
 	fmt.Printf("\n✓ %s\n", summary)
 }
 
+func commandName(strict bool) string {
+	if strict {
+		return "validate"
+	}
+	return "lint"
+}
+
+// --- index ---
+
 func runIndex(args []string) {
-	if len(args) == 0 {
+	jsonMode, rest := parseJSONFlag(args)
+	if len(rest) == 0 {
 		fmt.Fprintln(os.Stderr, "error: bundle path required")
 		os.Exit(2)
 	}
-	if err := index.Generate(args[0]); err != nil {
+	root := rest[0]
+	if err := index.Generate(root); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("✓ index.md files generated in %s\n", args[0])
+
+	// Count generated index files for JSON output.
+	var indexFiles []string
+	b, err := bundle.Load(root)
+	if err == nil {
+		for _, r := range b.Reserved {
+			if strings.HasSuffix(r.ID, "index") || r.ID == "index" {
+				indexFiles = append(indexFiles, r.Path)
+			}
+		}
+	}
+
+	if jsonMode {
+		outputJSON(map[string]any{
+			"command":        map[string]string{"name": "index"},
+			"bundle":         root,
+			"indexes_written": indexFiles,
+			"count":          len(indexFiles),
+		})
+		return
+	}
+	fmt.Printf("✓ index.md files generated in %s\n", root)
 }
 
+// --- graph ---
+
 func runGraph(args []string) {
-	b := mustBundle(args)
+	jsonMode, rest := parseJSONFlag(args)
+	b, _ := mustBundle(rest)
 	g := graph.Build(b)
+	s := g.Stats()
+
+	if jsonMode {
+		density := 0.0
+		if s.NodeCount > 1 && s.EdgeCount > 0 {
+			density = float64(s.EdgeCount) / float64(s.NodeCount*(s.NodeCount-1)) * 100
+		}
+		nodes := make([]map[string]string, 0, len(g.Nodes))
+		for _, n := range g.Nodes {
+			nodes = append(nodes, map[string]string{"id": n.ID, "type": n.Type})
+		}
+		edges := make([]map[string]string, 0, len(g.Edges))
+		for _, e := range g.Edges {
+			edges = append(edges, map[string]string{"from": e.From, "to": e.To})
+		}
+		outputJSON(map[string]any{
+			"command":      map[string]string{"name": "graph"},
+			"bundle":       b.Root,
+			"nodes":        nodes,
+			"edges":        edges,
+			"node_count":   s.NodeCount,
+			"edge_count":   s.EdgeCount,
+			"isolated":     s.IsolatedNodes,
+			"max_backlinks": s.MaxBacklinks,
+			"density_pct":  density,
+		})
+		return
+	}
 	fmt.Print(g.Summary())
 }
 
+// --- list ---
+
 func runList(args []string) {
-	b := mustBundle(args)
+	jsonMode, rest := parseJSONFlag(args)
+	b, _ := mustBundle(rest)
+
+	if jsonMode {
+		concepts := make([]map[string]string, 0, len(b.Concepts))
+		for _, c := range b.Concepts {
+			concepts = append(concepts, map[string]string{
+				"id":    c.ID,
+				"type":  c.Frontmatter.Type,
+				"title": c.Frontmatter.Title,
+			})
+		}
+		outputJSON(map[string]any{
+			"command":  map[string]string{"name": "list"},
+			"bundle":   b.Root,
+			"concepts": concepts,
+			"count":    len(b.Concepts),
+		})
+		return
+	}
+
 	if len(b.Concepts) == 0 {
 		fmt.Println("(no concepts found)")
 		return
@@ -163,102 +291,166 @@ func runList(args []string) {
 	fmt.Printf("\n%d concepts\n", len(b.Concepts))
 }
 
-func runEnrich(args []string) {
-	fs := newFlagSet("enrich")
-	sourceName := fs.string("source", "", "source type (postgres, openapi)")
-	dsn := fs.string("dsn", "", "source connection string")
-	outDir := fs.string("out", "", "output bundle directory")
-	baseURL := fs.string("base-url", "https://api.openai.com/v1", "LLM API endpoint")
-	apiKey := fs.string("api-key", "", "LLM API key (or OKF_API_KEY / OPENAI_API_KEY)")
-	model := fs.string("model", "gpt-4o", "LLM model name")
-	maxConcepts := fs.int("max", 0, "max concepts to enrich (0 = no limit)")
-	trace := fs.bool("trace", false, "emit per-concept progress to stderr")
-	fs.parse(args)
+// --- schema ---
 
-	if *sourceName == "" {
-		fmt.Fprintln(os.Stderr, "error: --source is required")
-		fmt.Fprintf(os.Stderr, "available sources: %s\n", strings.Join(source.AvailableSources(), ", "))
-		os.Exit(2)
-	}
-	if *dsn == "" {
-		fmt.Fprintln(os.Stderr, "error: --dsn is required")
-		os.Exit(2)
-	}
-	if *outDir == "" {
-		fmt.Fprintln(os.Stderr, "error: --out is required")
-		os.Exit(2)
-	}
+// schemaFlag describes a single flag for machine consumption.
+type schemaFlag struct {
+	Name        string `json:"name"`
+	Short       string `json:"short,omitempty"`
+	Type        string `json:"type"`
+	Default     string `json:"default"`
+	Description string `json:"description"`
+}
 
-	// Resolve API key from flag or env.
-	key := *apiKey
-	if key == "" {
-		key = os.Getenv("OKF_API_KEY")
-	}
-	if key == "" {
-		key = os.Getenv("OPENAI_API_KEY")
-	}
+// schemaArg describes a positional argument.
+type schemaArg struct {
+	Name     string `json:"name"`
+	Required bool   `json:"required"`
+}
 
-	// Open the source.
-	src, err := source.Open(*sourceName, *dsn)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: open source: %v\n", err)
-		os.Exit(1)
-	}
+// schemaCommand describes a single CLI command for machine consumption.
+type schemaCommand struct {
+	Name      string       `json:"name"`
+	Short     string       `json:"short"`
+	Long      string       `json:"long,omitempty"`
+	Flags     []schemaFlag `json:"flags"`
+	Args      []schemaArg  `json:"args"`
+	Stdout    string       `json:"stdout"`
+	ExitCodes []int        `json:"exit_codes"`
+}
 
-	// Create the LLM client.
-	client := &llm.Client{
-		BaseURL: *baseURL,
-		APIKey:  key,
-		Model:   *model,
-	}
+// schemaRoot is the top-level schema output.
+type schemaRoot struct {
+	Name        string          `json:"name"`
+	Version     string          `json:"version"`
+	Description string          `json:"description"`
+	Commands    []schemaCommand `json:"commands"`
+	ExitCodes   []exitCodeDoc   `json:"exit_codes"`
+}
 
-	// Run enrichment.
-	report, err := enrich.Run(context.Background(), enrich.Options{
-		Source:      src,
-		ChatFn:      client.ChatFn(),
-		OutDir:      *outDir,
-		MaxConcepts: *maxConcepts,
-		Trace:       *trace,
-	})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
+type exitCodeDoc struct {
+	Code        int    `json:"code"`
+	Description string `json:"description"`
+}
 
-	// Output the report as JSON to stdout.
-	out, err := json.MarshalIndent(report, "", "  ")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: marshal report: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Println(string(out))
+var exitCodeDocs = []exitCodeDoc{
+	{0, "success"},
+	{1, "validation errors found (validate) or runtime error"},
+	{2, "usage error (missing args, unknown command)"},
+}
 
-	if report.Errors > 0 {
-		os.Exit(1)
+func runSchema(args []string) {
+	// `okf schema <command>` describes a single command.
+	if len(args) > 0 && args[0] != "--json" && args[0] != "-j" {
+		cmd := findSchemaCommand(args[0])
+		if cmd == nil {
+			fmt.Fprintf(os.Stderr, "error: unknown command %q\n", args[0])
+			os.Exit(2)
+		}
+		outputJSON(cmd)
+		return
+	}
+	outputJSON(buildSchemaRoot())
+}
+
+func buildSchemaRoot() schemaRoot {
+	return schemaRoot{
+		Name:        "okf",
+		Version:     version,
+		Description: "Go CLI toolkit for the Open Knowledge Format (OKF)",
+		Commands:    allSchemaCommands(),
+		ExitCodes:   exitCodeDocs,
 	}
 }
 
-// flagSet is a lightweight wrapper around flag.FlagSet for subcommand parsing.
-type flagSet struct {
-	fs *flag.FlagSet
+func allSchemaCommands() []schemaCommand {
+	jsonFlag := schemaFlag{Name: "json", Short: "j", Type: "bool", Default: "false", Description: "output structured JSON instead of human-readable text"}
+	return []schemaCommand{
+		{
+			Name:  "schema",
+			Short: "Print machine-readable CLI metadata as JSON",
+			Long:  "Outputs a JSON document describing every command, its flags, arguments, output format, and exit codes. Pass a command name to describe just that command.",
+			Flags: nil,
+			Args: []schemaArg{
+				{Name: "command", Required: false},
+			},
+			Stdout:    "json",
+			ExitCodes: []int{0, 2},
+		},
+		{
+			Name:  "validate",
+			Short: "Validate a bundle against the OKF spec",
+			Long:  "Checks every concept for required frontmatter (type), recommended fields (title, description, tags), non-empty body, and valid cross-links.",
+			Flags: []schemaFlag{jsonFlag},
+			Args: []schemaArg{
+				{Name: "bundle", Required: true},
+			},
+			Stdout:    "text|json",
+			ExitCodes: []int{0, 1, 2},
+		},
+		{
+			Name:  "lint",
+			Short: "Check recommended fields and style (warnings only)",
+			Long:  "Same checks as validate but only emits warnings — errors are suppressed. Exits 0 even with warnings.",
+			Flags: []schemaFlag{jsonFlag},
+			Args: []schemaArg{
+				{Name: "bundle", Required: true},
+			},
+			Stdout:    "text|json",
+			ExitCodes: []int{0, 2},
+		},
+		{
+			Name:  "index",
+			Short: "Generate index.md files (progressive disclosure)",
+			Long:  "Writes index.md into every directory containing concept documents, providing progressive disclosure per OKF spec §6.",
+			Flags: []schemaFlag{jsonFlag},
+			Args: []schemaArg{
+				{Name: "bundle", Required: true},
+			},
+			Stdout:    "text|json",
+			ExitCodes: []int{0, 1, 2},
+		},
+		{
+			Name:  "graph",
+			Short: "Print cross-link graph statistics",
+			Long:  "Builds the directed cross-link graph from concept markdown links and prints summary statistics (nodes, edges, isolated concepts, density).",
+			Flags: []schemaFlag{jsonFlag},
+			Args: []schemaArg{
+				{Name: "bundle", Required: true},
+			},
+			Stdout:    "text|json",
+			ExitCodes: []int{0, 1, 2},
+		},
+		{
+			Name:  "list",
+			Short: "List all concepts in the bundle",
+			Long:  "Lists every concept document with its ID, type, and title.",
+			Flags: []schemaFlag{jsonFlag},
+			Args: []schemaArg{
+				{Name: "bundle", Required: true},
+			},
+			Stdout:    "text|json",
+			ExitCodes: []int{0, 1, 2},
+		},
+		{
+			Name:      "version",
+			Short:     "Print version",
+			Flags:     nil,
+			Args:      nil,
+			Stdout:    "text",
+			ExitCodes: []int{0},
+		},
+	}
 }
 
-func newFlagSet(name string) *flagSet {
-	return &flagSet{fs: flag.NewFlagSet(name, flag.ExitOnError)}
+func findSchemaCommand(name string) *schemaCommand {
+	for _, c := range allSchemaCommands() {
+		if c.Name == name {
+			return &c
+		}
+	}
+	return nil
 }
 
-func (f *flagSet) string(name, def, usage string) *string {
-	return f.fs.String(name, def, usage)
-}
-
-func (f *flagSet) int(name string, def int, usage string) *int {
-	return f.fs.Int(name, def, usage)
-}
-
-func (f *flagSet) bool(name string, def bool, usage string) *bool {
-	return f.fs.Bool(name, def, usage)
-}
-
-func (f *flagSet) parse(args []string) {
-	f.fs.Parse(args)
-}
+// silence unused import warning for flag (used transitively for future expansion).
+var _ = flag.NewFlagSet
