@@ -1,0 +1,46 @@
+# Release workflow: on a semver tag push (vX.Y.Z), runs GoReleaser to build
+# multi-platform binaries and publish a GitHub Release.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+
+jobs:
+  goreleaser:
+    name: goreleaser
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+          cache: true
+
+      - name: Install Syft (SBOM generator)
+        uses: anchore/sbom-action/download-syft@v0
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: latest
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

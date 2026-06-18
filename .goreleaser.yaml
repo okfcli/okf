@@ -1,0 +1,86 @@
+# GoReleaser config. Triggered by the release.yml workflow on v*.*.* tags.
+# Builds multi-platform binaries for Linux, macOS, and Windows.
+# See https://goreleaser.com for documentation.
+version: 2
+
+project_name: okf
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: okf
+    main: ./cmd/okf
+    binary: okf
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.ShortCommit}}
+      - -X main.date={{.Date}}
+
+archives:
+  - id: default
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  use: github-native
+  sort: asc
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\(.+\))?!?:.+$'
+      order: 0
+    - title: Fixes
+      regexp: '^.*?fix(\(.+\))?!?:.+$'
+      order: 1
+    - title: Other
+      order: 999
+
+sboms:
+  - artifacts: archive
+
+signs:
+  - cmd: cosign
+    args:
+      - sign-blob
+      - "--yes"
+      - "--bundle=${signature}"
+      - "${artifact}"
+    artifacts: checksum
+    output: true
+
+release:
+  github:
+    owner: okfcli
+    name: okf
+  draft: false
+  prerelease: auto
+  name_template: "v{{ .Version }}"

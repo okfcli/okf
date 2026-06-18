@@ -25,7 +25,11 @@ import (
 	"github.com/okfcli/okf/internal/validate"
 )
 
-var version = "dev"
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
 
 func main() {
 	args := os.Args[1:]
@@ -39,7 +43,7 @@ func main() {
 
 	switch cmd {
 	case "version", "--version", "-v":
-		outputJSON(map[string]any{"name": "okf", "version": version})
+		outputJSON(map[string]any{"name": "okf", "version": version, "commit": commit, "date": date})
 	case "help", "--help", "-h":
 		printUsage()
 	case "schema":
