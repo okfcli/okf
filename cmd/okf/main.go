@@ -14,10 +14,14 @@ import (
 	"os"
 	"strings"
 
+	"github.com/okfcli/okf/internal/backlinks"
 	"github.com/okfcli/okf/internal/bundle"
 	"github.com/okfcli/okf/internal/cerr"
 	"github.com/okfcli/okf/internal/graph"
 	"github.com/okfcli/okf/internal/index"
+	"github.com/okfcli/okf/internal/initbundle"
+	"github.com/okfcli/okf/internal/search"
+	"github.com/okfcli/okf/internal/show"
 	"github.com/okfcli/okf/internal/validate"
 )
 
@@ -50,6 +54,14 @@ func main() {
 		runGraph(rest)
 	case "list":
 		runList(rest)
+	case "show":
+		runShow(rest)
+	case "search":
+		runSearch(rest)
+	case "init":
+		runInit(rest)
+	case "backlinks":
+		runBacklinks(rest)
 	default:
 		exitErr(cerr.Usage("unknown command: %s", cmd))
 	}
@@ -64,11 +76,15 @@ All output is JSON on stdout. Diagnostics go to stderr.
 
 Commands:
   schema [command]            Print machine-readable CLI metadata as JSON
+  init <bundle>               Create a new empty OKF bundle
   validate <bundle>           Validate a bundle against the OKF spec
   lint <bundle>               Check recommended fields and style (warnings only)
   index <bundle>              Generate index.md files (progressive disclosure)
-  graph <bundle>              Print cross-link graph statistics
   list <bundle>               List all concepts in the bundle
+  show <bundle> <concept-id> Show a single concept's full content
+  search <bundle> [filters]  Search concepts by tag, type, or text
+  backlinks <bundle> <id>    List concepts that link to a given concept
+  graph <bundle>             Print cross-link graph statistics
   version                     Print version
 
 Exit codes:
@@ -251,6 +267,146 @@ func runList(args []string) {
 	})
 }
 
+// --- show ---
+
+func runShow(args []string) {
+	if len(args) < 2 {
+		exitErr(cerr.Usage("usage: okf show <bundle> <concept-id>"))
+	}
+	b := mustBundle(args[:1])
+	c, err := show.Show(b, args[1])
+	if err != nil {
+		exitErr(cerr.Validation("%s", err))
+	}
+
+	var tags []string
+	if c.Frontmatter.Tags != nil {
+		tags = c.Frontmatter.Tags
+	}
+
+	outputJSON(map[string]any{
+		"command": "show",
+		"bundle":  b.Root,
+		"concept": map[string]any{
+			"id":          c.ID,
+			"path":        c.Path,
+			"type":        c.Frontmatter.Type,
+			"title":       c.Frontmatter.Title,
+			"description": c.Frontmatter.Description,
+			"resource":    c.Frontmatter.Resource,
+			"tags":        tags,
+			"body":        c.Body,
+		},
+	})
+}
+
+// --- search ---
+
+func runSearch(args []string) {
+	if len(args) == 0 {
+		exitErr(cerr.Usage("usage: okf search <bundle> [--tag <tag>] [--type <type>] [--text <query>]"))
+	}
+	bundlePath := args[0]
+	rest := args[1:]
+
+	f := search.Filters{}
+	for i := 0; i < len(rest); i++ {
+		switch rest[i] {
+		case "--tag":
+			if i+1 >= len(rest) {
+				exitErr(cerr.Usage("--tag requires a value"))
+			}
+			f.Tag = rest[i+1]
+			i++
+		case "--type":
+			if i+1 >= len(rest) {
+				exitErr(cerr.Usage("--type requires a value"))
+			}
+			f.Type = rest[i+1]
+			i++
+		case "--text":
+			if i+1 >= len(rest) {
+				exitErr(cerr.Usage("--text requires a value"))
+			}
+			f.Text = rest[i+1]
+			i++
+		default:
+			exitErr(cerr.Usage("unknown search flag: %s", rest[i]))
+		}
+	}
+
+	b, err := bundle.Load(bundlePath)
+	if err != nil {
+		exitErr(cerr.IO(err, "load bundle %s", bundlePath))
+	}
+
+	results := search.Search(b, f)
+	concepts := make([]map[string]string, 0, len(results))
+	for _, c := range results {
+		concepts = append(concepts, map[string]string{
+			"id":    c.ID,
+			"type":  c.Frontmatter.Type,
+			"title": c.Frontmatter.Title,
+		})
+	}
+
+	outputJSON(map[string]any{
+		"command":  "search",
+		"bundle":   b.Root,
+		"filters":  f,
+		"results":  concepts,
+		"count":    len(results),
+	})
+}
+
+// --- init ---
+
+func runInit(args []string) {
+	if len(args) == 0 {
+		exitErr(cerr.Usage("usage: okf init <bundle-path>"))
+	}
+	dir := args[0]
+	if err := initbundle.Create(dir); err != nil {
+		exitErr(cerr.IO(err, "create bundle %s", dir))
+	}
+
+	var created []string
+	for _, sub := range []string{"tables", "datasets", "playbooks"} {
+		created = append(created, sub+"/")
+	}
+
+	outputJSON(map[string]any{
+		"command":   "init",
+		"bundle":    dir,
+		"created":   created,
+		"index":     "index.md",
+		"gitignore": ".gitignore",
+	})
+}
+
+// --- backlinks ---
+
+func runBacklinks(args []string) {
+	if len(args) < 2 {
+		exitErr(cerr.Usage("usage: okf backlinks <bundle> <concept-id>"))
+	}
+	b := mustBundle(args[:1])
+	conceptID := args[1]
+	links := backlinks.Backlinks(b, conceptID)
+
+	if links == nil {
+		links = []string{} // emit empty array, not null
+	}
+
+	outputJSON(map[string]any{
+		"command":    "backlinks",
+		"bundle":     b.Root,
+		"concept_id": conceptID,
+		"backlinks":  links,
+		"count":      len(links),
+	})
+}
+
 // --- schema ---
 
 // schemaFlag describes a single flag for machine consumption.
@@ -322,6 +478,14 @@ func allSchemaCommands() []schemaCommand {
 			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeUsage},
 		},
 		{
+			Name:   "init",
+			Short:  "Create a new empty OKF bundle",
+			Long:   "Creates a bundle directory with standard subdirectories (tables, datasets, playbooks), a root index.md, and a .gitignore. Fails if the directory already exists.",
+			Args:   []schemaArg{{Name: "bundle", Required: true}},
+			Stdout: "json",
+			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeIO, cerr.ExitCodeUsage},
+		},
+		{
 			Name:   "validate",
 			Short:  "Validate a bundle against the OKF spec",
 			Long:   "Checks every concept for required frontmatter (type), recommended fields (title, description, tags), non-empty body, and valid cross-links. Exits 1 if any errors are found.",
@@ -346,17 +510,54 @@ func allSchemaCommands() []schemaCommand {
 			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeIO, cerr.ExitCodeUsage},
 		},
 		{
-			Name:   "graph",
-			Short:  "Print cross-link graph statistics",
-			Long:   "Builds the directed cross-link graph from concept markdown links and prints nodes, edges, and summary statistics.",
+			Name:   "list",
+			Short:  "List all concepts in the bundle",
+			Long:   "Lists every concept document with its ID, type, and title.",
 			Args:   []schemaArg{{Name: "bundle", Required: true}},
 			Stdout: "json",
 			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeIO, cerr.ExitCodeUsage},
 		},
 		{
-			Name:   "list",
-			Short:  "List all concepts in the bundle",
-			Long:   "Lists every concept document with its ID, type, and title.",
+			Name:   "show",
+			Short:  "Show a single concept's full content",
+			Long:   "Returns the concept's ID, file path, frontmatter (type, title, description, resource, tags), and markdown body as JSON.",
+			Args: []schemaArg{
+				{Name: "bundle", Required: true},
+				{Name: "concept-id", Required: true},
+			},
+			Stdout: "json",
+			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeValidation, cerr.ExitCodeIO, cerr.ExitCodeUsage},
+		},
+		{
+			Name:   "search",
+			Short:  "Search concepts by tag, type, or text",
+			Long:   "Filters concepts in a bundle by tag (--tag), frontmatter type (--type), or full-text search in title, description, and body (--text). Multiple filters are AND-combined. With no filters, returns all concepts.",
+			Flags: []schemaFlag{
+				{Name: "tag", Type: "string", Default: "", Description: "filter by tag (case-insensitive)"},
+				{Name: "type", Type: "string", Default: "", Description: "filter by frontmatter type (case-insensitive)"},
+				{Name: "text", Type: "string", Default: "", Description: "full-text search in title, description, and body (case-insensitive)"},
+			},
+			Args: []schemaArg{
+				{Name: "bundle", Required: true},
+			},
+			Stdout: "json",
+			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeIO, cerr.ExitCodeUsage},
+		},
+		{
+			Name:   "backlinks",
+			Short:  "List concepts that link to a given concept",
+			Long:   "Returns the IDs of all concepts in the bundle that contain a markdown link to the specified concept. Deduplicates multiple links from the same source.",
+			Args: []schemaArg{
+				{Name: "bundle", Required: true},
+				{Name: "concept-id", Required: true},
+			},
+			Stdout: "json",
+			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeIO, cerr.ExitCodeUsage},
+		},
+		{
+			Name:   "graph",
+			Short:  "Print cross-link graph statistics",
+			Long:   "Builds the directed cross-link graph from concept markdown links and prints nodes, edges, and summary statistics.",
 			Args:   []schemaArg{{Name: "bundle", Required: true}},
 			Stdout: "json",
 			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeIO, cerr.ExitCodeUsage},

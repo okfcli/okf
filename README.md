@@ -2,7 +2,7 @@
 
 A Go CLI toolkit for the [Open Knowledge Format (OKF)](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) — a vendor-neutral format for representing data catalog knowledge as plain markdown files with YAML frontmatter.
 
-`okf` validates, lints, indexes, and inspects OKF bundles. One static binary, no runtime dependencies, fast enough to validate millions of concepts.
+`okf` creates, validates, lints, indexes, searches, and inspects OKF bundles. One static binary, no runtime dependencies, fast enough to validate millions of concepts.
 
 ## Agentic-first design
 
@@ -19,9 +19,11 @@ A Go CLI toolkit for the [Open Knowledge Format (OKF)](https://github.com/Google
 okf schema
 
 # Then drives it — JSON on stdout, always:
+okf init ./my-bundle
 okf validate ./my-bundle
-okf list ./my-bundle
-okf graph ./my-bundle
+okf search ./my-bundle --tag auth
+okf show ./my-bundle tables/users
+okf backlinks ./my-bundle tables/users
 ```
 
 ## Exit codes
@@ -29,23 +31,10 @@ okf graph ./my-bundle
 | Code | Meaning |
 |------|---------|
 | 0 | success |
-| 1 | validation error (spec violation, broken link, bad input) |
+| 1 | validation error (spec violation, broken link, concept not found) |
 | 2 | filesystem or I/O error |
 | 3 | internal error (unexpected) |
 | 4 | usage error (missing args, unknown command) |
-
-Errors are emitted as JSON on stdout:
-
-```json
-{
-  "error": {
-    "kind": "io",
-    "code": 500,
-    "reason": "ioError",
-    "message": "load bundle /nonexistent"
-  }
-}
-```
 
 ## Install
 
@@ -62,52 +51,110 @@ make build
 # binary at bin/okf
 ```
 
-## Usage
-
-```bash
-okf schema                     # machine-readable CLI metadata (JSON)
-okf schema validate            # describe a single command (JSON)
-okf validate ./bundles/ga4     # validate against the OKF spec (JSON)
-okf lint ./my-bundle           # warnings only (JSON)
-okf index ./my-bundle          # generate index.md files (JSON)
-okf graph ./bundles/so         # cross-link graph statistics (JSON)
-okf list ./my-bundle           # list all concepts (JSON)
-okf version                    # version (JSON)
-```
-
 ## Commands
 
 ### `okf schema [command]`
 
-Prints machine-readable CLI metadata as JSON. With no argument, describes every command. With a command name, describes just that command. This is the entry point for AI agents discovering the CLI.
+Prints machine-readable CLI metadata as JSON. With no argument, describes every command. With a command name, describes just that command.
+
+### `okf init <bundle>`
+
+Creates a new bundle directory with standard subdirectories (tables, datasets, playbooks), a root index.md, and a .gitignore. Fails if the directory already exists.
 
 ### `okf validate <bundle>`
 
 Checks a bundle against the OKF spec:
 - **Required fields**: every concept must have a `type` in its frontmatter (OKF §4.1)
-- **Link integrity**: all cross-links (`[text](/path/to/concept.md)`) must resolve to an existing concept
+- **Link integrity**: all cross-links must resolve to an existing concept
 - **Reserved filenames**: `index.md` and `log.md` are handled correctly (OKF §3.1)
 
-Exits with code 1 if any errors are found.
+Exits 1 if any errors are found.
 
 ### `okf lint <bundle>`
 
-Checks recommended fields and style (warnings only, no errors):
-- `title`, `description`, `tags` are recommended per OKF §4.1
+Checks recommended fields and style (warnings only):
+- `title`, `description`, `tags` recommended per OKF §4.1
 - Non-empty body with structural markdown per OKF §4.2
 - Timestamp sanity checks
 
 ### `okf index <bundle>`
 
-Generates `index.md` files in every directory containing concepts. Each index lists the concepts in that directory (with title, type, description) and links to subdirectory indexes. This implements the progressive disclosure pattern from OKF §6.
-
-### `okf graph <bundle>`
-
-Builds the cross-link graph and outputs nodes, edges, and summary statistics: node count, edge count, isolated nodes, max backlinks, and graph density.
+Generates `index.md` files in every directory containing concepts (progressive disclosure per OKF §6).
 
 ### `okf list <bundle>`
 
-Lists all concepts in the bundle with their ID, type, and title.
+Lists all concepts with their ID, type, and title.
+
+### `okf show <bundle> <concept-id>`
+
+Returns a single concept's full content as JSON: ID, file path, frontmatter (type, title, description, resource, tags), and the complete markdown body. This is how an AI agent reads a concept's content.
+
+### `okf search <bundle> [--tag <tag>] [--type <type>] [--text <query>]`
+
+Filters concepts by tag, frontmatter type, or full-text search (title, description, body — case-insensitive). Multiple filters are AND-combined. With no filters, returns all concepts.
+
+### `okf backlinks <bundle> <concept-id>`
+
+Returns the IDs of all concepts that link to the given concept. Deduplicates multiple links from the same source. An AI agent uses this to understand reverse relationships — "who depends on this concept?"
+
+### `okf graph <bundle>`
+
+Builds the cross-link graph and outputs nodes, edges, and summary statistics (node count, edge count, isolated nodes, max backlinks, density).
+
+### `okf version`
+
+Prints version as JSON.
+
+## Use cases
+
+### 1. AI-driven documentation pipeline
+
+An AI agent creates a bundle, writes concept documents, validates them, and generates navigation:
+
+```bash
+okf init ./bundles/mydb                          # create empty bundle
+# ... AI writes .md files into tables/, datasets/ ...
+okf validate ./bundles/mydb                       # catch spec violations
+okf index ./bundles/mydb                          # generate index.md files
+okf graph ./bundles/mydb                          # verify cross-link structure
+```
+
+The CLI is the quality gate. The AI reads validation findings as JSON, fixes each one, and re-validates.
+
+### 2. Knowledge catalog audit
+
+An AI agent inspects an existing bundle for health and quality:
+
+```bash
+okf list ./bundles/catalog                        # inventory all concepts
+okf lint ./bundles/catalog                        # flag missing recommended fields
+okf graph ./bundles/catalog                       # find isolated concepts (orphans)
+okf search ./bundles/catalog --type Table         # filter by type
+okf search ./bundles/catalog --text "deprecated"  # find stale concepts
+okf backlinks ./bundles/catalog tables/users      # who depends on this?
+```
+
+The agent can identify structural problems (broken links, orphans, missing metadata) without reading a single file.
+
+### 3. CI quality gate
+
+Every PR that touches an OKF bundle runs validate. If it exits 1, the AI reads the findings and either fixes or comments:
+
+```bash
+okf validate ./bundles/ga4
+# exit 1 -> parse findings array -> fix each -> re-validate
+```
+
+### 4. Onboarding assistant
+
+A new engineer joins. An AI agent walks them through the knowledge map:
+
+```bash
+okf list ./bundles/team                           # what's in here?
+okf show ./bundles/team tables/users              # read a key concept
+okf backlinks ./bundles/team tables/users         # what depends on it?
+okf search ./bundles/team --tag auth              # find related concepts
+```
 
 ## What is OKF?
 
@@ -148,11 +195,9 @@ timestamp: 2026-05-28T14:30:00Z
 Joined with [customers](/tables/customers.md) on `customer_id`.
 ```
 
-The format is intentionally minimal: no schema registry, no central authority, no required tooling. If you can `cat` a file, you can read OKF; if you can `git clone` a repo, you can ship it.
-
 ## Project Status
 
-Early development. The CLI surface (schema, validate, lint, index, graph, list) is functional. Planned:
+Early development. The CLI surface (schema, init, validate, lint, index, list, show, search, backlinks, graph, version) is functional with 35 tests. Planned:
 
 - `okf serve` — local HTTP server to browse a bundle interactively
 - `okf render` — export a bundle as a self-contained HTML file
