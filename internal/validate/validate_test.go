@@ -1,7 +1,12 @@
 package validate
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/okfcli/okf/internal/bundle"
 )
 
 func TestExtractLinks(t *testing.T) {
@@ -83,4 +88,83 @@ func TestNormalizePath(t *testing.T) {
 			t.Errorf("normalizePath(%q) = %q, want %q", tt.in, got, tt.want)
 		}
 	}
+}
+
+// --- validateLinks integration tests ---
+
+func TestValidateLinks_RelativeLinkSuggestsAbsolutePath(t *testing.T) {
+	// A concept at pages/about has [Cloaked](organizations/cloaked). The
+	// relative target resolves to pages/organizations/cloaked (broken), but
+	// the absolute target organizations/cloaked exists. The error should
+	// suggest the absolute path.
+	b := testBundle(t, map[string]string{
+		"pages/about.md":             "---\ntype: Page\ntitle: About\n---\n\nSee [Cloaked](organizations/cloaked).",
+		"organizations/cloaked.md":   "---\ntype: Org\ntitle: Cloaked\n---\n\nbody",
+	})
+
+	r := &Report{}
+	validateLinks(r, b)
+
+	var msg string
+	for _, f := range r.Findings {
+		if f.ConceptID == "pages/about" && strings.Contains(f.Message, "broken link") {
+			msg = f.Message
+			break
+		}
+	}
+	if msg == "" {
+		t.Fatalf("no broken-link finding for pages/about: %+v", r.Findings)
+	}
+	if !strings.Contains(msg, "use /organizations/cloaked for an absolute path") {
+		t.Errorf("error %q does not suggest absolute path", msg)
+	}
+}
+
+func TestValidateLinks_NonexistentConceptNoAbsolutePathSuggestion(t *testing.T) {
+	// A link to a genuinely nonexistent concept should report "broken link:"
+	// but must NOT mention "absolute path".
+	b := testBundle(t, map[string]string{
+		"pages/about.md": "---\ntype: Page\ntitle: About\n---\n\nSee [Ghost](/nonexistent/ghost).",
+	})
+
+	r := &Report{}
+	validateLinks(r, b)
+
+	var msg string
+	for _, f := range r.Findings {
+		if f.ConceptID == "pages/about" && strings.Contains(f.Message, "broken link") {
+			msg = f.Message
+			break
+		}
+	}
+	if msg == "" {
+		t.Fatalf("no broken-link finding for pages/about: %+v", r.Findings)
+	}
+	if !strings.Contains(msg, "broken link:") {
+		t.Errorf("error %q does not contain 'broken link:'", msg)
+	}
+	if strings.Contains(msg, "absolute path") {
+		t.Errorf("error %q should not mention 'absolute path' for a genuinely missing concept", msg)
+	}
+}
+
+// --- helpers ---
+
+func testBundle(t *testing.T, files map[string]string) *bundle.Bundle {
+	t.Helper()
+	dir := t.TempDir()
+	for path, content := range files {
+		full := filepath.Join(dir, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+	b, err := bundle.Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	return b
 }
