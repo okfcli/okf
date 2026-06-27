@@ -95,6 +95,13 @@ func validateBody(r *Report, c *concept.Concept) {
 // validateLinks checks that all cross-links within the bundle resolve to an
 // existing concept. Both absolute (/path/to/concept.md) and relative links
 // are checked.
+//
+// Relative links (without a leading /) resolve from the concept's own
+// directory: a link [X](organizations/cloaked) in pages/about.md targets
+// pages/organizations/cloaked, not organizations/cloaked. When such a
+// relative link is broken but the same target would resolve as an absolute
+// path, the error message suggests the absolute form (e.g.
+// /organizations/cloaked) so authors can fix the link.
 func validateLinks(r *Report, b *bundle.Bundle) {
 	for _, c := range b.Concepts {
 		links := extractLinks(c.Body)
@@ -104,10 +111,45 @@ func validateLinks(r *Report, b *bundle.Bundle) {
 				continue // external URL or non-concept link, skip
 			}
 			if !b.HasConcept(target) {
-				r.add(c.ID, SeverityError, fmt.Sprintf("broken link: [%s] -> %s (concept %s not found)", link.Text, link.Target, target))
+				// The link didn't resolve as written. Check whether the raw
+				// target would resolve as an absolute (bundle-root-relative)
+				// path; if so, the author likely intended an absolute link.
+				if absTarget := absoluteTarget(link.Target); absTarget != "" && b.HasConcept(absTarget) {
+					r.add(c.ID, SeverityError, fmt.Sprintf(
+						"broken link: [%s] -> %s (relative links resolve from the current concept's directory; use /%s for an absolute path)",
+						link.Text, link.Target, absTarget))
+				} else {
+					r.add(c.ID, SeverityError, fmt.Sprintf(
+						"broken link: [%s] -> %s (concept %s not found)",
+						link.Text, link.Target, target))
+				}
 			}
 		}
 	}
+}
+
+// absoluteTarget converts a raw link target into the concept ID it would
+// have if treated as an absolute (bundle-root-relative) path. It strips a
+// leading /, removes any fragment (#) or query (?), and drops a trailing
+// .md suffix. It returns "" for external URLs or empty targets.
+func absoluteTarget(raw string) string {
+	target := strings.TrimSpace(raw)
+	if target == "" || isExternalURL(target) {
+		return ""
+	}
+	// Strip any fragment (#section) or query (?query).
+	if idx := strings.IndexAny(target, "#?"); idx != -1 {
+		target = target[:idx]
+	}
+	if target == "" {
+		return ""
+	}
+	target = strings.TrimPrefix(target, "/")
+	target = strings.TrimSuffix(target, ".md")
+	if target == "" {
+		return ""
+	}
+	return concept.ConceptID(target)
 }
 
 // Link represents a markdown link found in a concept body.
@@ -117,6 +159,16 @@ type Link struct {
 }
 
 // ExtractLinks parses all markdown links [text](target) from a body.
+//
+// Link targets may be absolute or relative. Absolute targets begin with /
+// and resolve against the bundle root (e.g. /tables/users.md -> the
+// concept tables/users regardless of where the linking concept lives).
+// Relative targets lack a leading / and resolve against the linking
+// concept's own directory: a target organizations/cloaked in a concept at
+// pages/about resolves to pages/organizations/cloaked, not
+// organizations/cloaked. External URLs (http://, https://, mailto:, and
+// pure-fragment links like #section) are returned as links but are ignored
+// by concept resolution.
 func ExtractLinks(body string) []Link {
 	return extractLinks(body)
 }
