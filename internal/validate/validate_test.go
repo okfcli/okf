@@ -67,6 +67,31 @@ func TestResolveLink_WithFragment(t *testing.T) {
 	}
 }
 
+func TestExtractFrontmatterLinks(t *testing.T) {
+	links := ExtractFrontmatterLinks([]string{"/tables/events_", "users", "", "/playbooks/check"})
+	if len(links) != 3 {
+		t.Fatalf("got %d links, want 3 (empty skipped): %+v", len(links), links)
+	}
+	if links[0].Text != "" || links[0].Target != "/tables/events_" {
+		t.Errorf("link[0] = %+v, want Text=\"\" Target=/tables/events_", links[0])
+	}
+	if links[1].Target != "users" {
+		t.Errorf("link[1] target = %q, want users", links[1].Target)
+	}
+	if links[2].Target != "/playbooks/check" {
+		t.Errorf("link[2] target = %q, want /playbooks/check", links[2].Target)
+	}
+}
+
+func TestExtractFrontmatterLinks_Empty(t *testing.T) {
+	if links := ExtractFrontmatterLinks(nil); len(links) != 0 {
+		t.Fatalf("got %d links, want 0", len(links))
+	}
+	if links := ExtractFrontmatterLinks([]string{}); len(links) != 0 {
+		t.Fatalf("got %d links, want 0", len(links))
+	}
+}
+
 func TestNormalizePath(t *testing.T) {
 	tests := []struct {
 		in, want string

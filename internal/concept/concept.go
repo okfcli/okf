@@ -22,6 +22,7 @@ type Frontmatter struct {
 	Resource    string            `yaml:"resource"`
 	Tags        []string          `yaml:"tags"`
 	Timestamp   time.Time         `yaml:"timestamp"`
+	Links       []string          `yaml:"links"`
 	Extensions  map[string]any    `yaml:",inline"`
 }
 
