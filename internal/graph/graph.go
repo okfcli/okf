@@ -45,8 +45,11 @@ func Build(b *bundle.Bundle) *Graph {
 
 	edgeSet := make(map[string]bool) // "from\x00to" dedup
 	for _, c := range b.Concepts {
-		links := validate.ExtractLinks(c.Body)
-		for _, link := range links {
+		// Collect body links and frontmatter links, then process them
+		// uniformly. The edgeSet dedup handles overlaps.
+		bodyLinks := validate.ExtractLinks(c.Body)
+		fmLinks := validate.ExtractFrontmatterLinks(c.Frontmatter.Links)
+		for _, link := range append(bodyLinks, fmLinks...) {
 			target := resolveLink(c.ID, link)
 			if target == "" || !b.HasConcept(target) {
 				continue

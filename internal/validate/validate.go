@@ -121,6 +121,21 @@ func ExtractLinks(body string) []Link {
 	return extractLinks(body)
 }
 
+// ExtractFrontmatterLinks converts a frontmatter "links:" list (concept IDs or
+// absolute /paths) into Link structs. Empty strings are skipped. The Text is
+// empty (frontmatter links have no link text); the Target is preserved as-is,
+// including any leading "/" — ResolveLink handles the stripping.
+func ExtractFrontmatterLinks(links []string) []Link {
+	out := make([]Link, 0, len(links))
+	for _, l := range links {
+		if strings.TrimSpace(l) == "" {
+			continue
+		}
+		out = append(out, Link{Text: "", Target: l})
+	}
+	return out
+}
+
 // extractLinks parses all markdown links [text](target) from a body.
 func extractLinks(body string) []Link {
 	var links []Link
