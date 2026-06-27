@@ -2,6 +2,7 @@
 package bundle
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -66,6 +67,19 @@ func Load(root string) (*Bundle, error) {
 			c, perr := concept.Parse(path, relPath)
 			if perr == nil {
 				b.Reserved = append(b.Reserved, c)
+			} else if errors.Is(perr, concept.ErrNoFrontmatter) {
+				// Generated index.md files have no frontmatter. Still load
+				// them as a Concept with empty Frontmatter and the raw file
+				// content as Body so callers can discover them via Reserved.
+				raw, rerr := os.ReadFile(path)
+				if rerr != nil {
+					return fmt.Errorf("read reserved %s: %w", relPath, rerr)
+				}
+				b.Reserved = append(b.Reserved, &concept.Concept{
+					ID:    concept.ConceptID(relPath),
+					Path:  path,
+					Body:  string(raw),
+				})
 			}
 			return nil
 		}
