@@ -117,6 +117,10 @@ Progressive disclosure (index.md) lets the agent navigate level by level instead
 | `okf search <bundle> [--tag] [--type] [--text]` | Search concepts by tag, type, or text |
 | `okf backlinks <bundle> <concept-id>` | List concepts that link to a given concept |
 | `okf graph <bundle>` | Print cross-link graph with nodes, edges, and stats |
+| `okf export <bundle> [-o file]` | Export entire bundle as a deterministic .okf tar.gz archive |
+| `okf sign <archive> keygen` | Generate an ML-KEM-768 post-quantum key pair |
+| `okf sign <archive> sign --pub <key>` | Post-quantum seal archive hash via HPKE (ML-KEM-768) |
+| `okf sign <archive> verify --priv <key> --sig <file>` | Verify archive integrity with post-quantum HPKE |
 | `okf version` | Print version |
 
 ## Exit codes
@@ -172,15 +176,54 @@ The format is intentionally minimal: no schema registry, no central authority, n
 
 ## Project status
 
-Early development. The CLI surface is functional with 35 tests:
+Early development. The CLI surface is functional with 44 tests:
 
-- `schema`, `init`, `validate`, `lint`, `index`, `list`, `show`, `search`, `backlinks`, `graph`, `version`
+- `schema`, `init`, `validate`, `lint`, `index`, `list`, `show`, `search`, `backlinks`, `graph`, `export`, `sign`, `version`
 
 Planned:
 
 - `okf serve` — local HTTP server to browse a bundle interactively
 - `okf render` — export a bundle as a self-contained HTML file
 - `okf-go` — Go library package for embedding in applications
+
+## Export & Post-Quantum Signing
+
+### Export
+
+Export your entire bundle into a single deterministic `.okf` archive (tar.gz).
+The archive is byte-reproducible — the same bundle always produces the same
+archive — which is essential for signing and verification.
+
+```bash
+okf export ./my-bundle -o bundle.okf
+```
+
+The output includes a manifest with per-file SHA-256 hashes, total file count,
+and the archive hash.
+
+### Post-Quantum Signing
+
+Sign archives with **ML-KEM-768** (FIPS 203, formerly Kyber) via **HPKE**
+(RFC 9180). This uses only the Go standard library (`crypto/hpke` +
+`crypto/mlkem`) — no external dependencies.
+
+The signer seals the archive's SHA-256 hash with HPKE using the public key.
+The verifier opens the ciphertext with the private key and confirms the hash
+matches. If the archive has been tampered with, the hash mismatch is detected.
+
+```bash
+# 1. Generate an ML-KEM-768 key pair
+okf sign bundle.okf keygen
+
+# 2. Sign the archive (seals the hash with HPKE)
+okf sign bundle.okf sign --pub <public-key-hex> -o sig.json
+
+# 3. Verify the archive (opens the HPKE ciphertext and checks the hash)
+okf sign bundle.okf verify --priv <private-key-hex> --sig sig.json
+```
+
+The signature output includes the algorithm (`ML-KEM-768/HPKE-SHA256`),
+the HPKE ciphertext, and the archive SHA-256.
 
 ## License
 
