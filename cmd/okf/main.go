@@ -17,11 +17,13 @@ import (
 	"github.com/okfcli/okf/internal/backlinks"
 	"github.com/okfcli/okf/internal/bundle"
 	"github.com/okfcli/okf/internal/cerr"
+	"github.com/okfcli/okf/internal/export"
 	"github.com/okfcli/okf/internal/graph"
 	"github.com/okfcli/okf/internal/index"
 	"github.com/okfcli/okf/internal/initbundle"
 	"github.com/okfcli/okf/internal/search"
 	"github.com/okfcli/okf/internal/show"
+	"github.com/okfcli/okf/internal/sign"
 	"github.com/okfcli/okf/internal/validate"
 )
 
@@ -66,6 +68,10 @@ func main() {
 		runInit(rest)
 	case "backlinks":
 		runBacklinks(rest)
+	case "export":
+		runExport(rest)
+	case "sign":
+		runSign(rest)
 	default:
 		exitErr(cerr.Usage("unknown command: %s", cmd))
 	}
@@ -89,6 +95,8 @@ Commands:
   search <bundle> [filters]  Search concepts by tag, type, or text
   backlinks <bundle> <id>    List concepts that link to a given concept
   graph <bundle>             Print cross-link graph statistics
+  export <bundle> [-o file]  Export entire bundle as a .okf tar.gz archive
+  sign <archive> <action>    Post-quantum sign/verify with ML-KEM-768 via HPKE
   version                     Print version
 
 Exit codes:
@@ -411,6 +419,188 @@ func runBacklinks(args []string) {
 	})
 }
 
+// --- export ---
+
+func runExport(args []string) {
+	if len(args) == 0 {
+		exitErr(cerr.Usage("usage: okf export <bundle> [-o <output-file>]"))
+	}
+	bundlePath := args[0]
+	outPath := bundlePath + ".okf"
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
+		case "-o", "--output":
+			if i+1 >= len(args) {
+				exitErr(cerr.Usage("-o requires a value"))
+			}
+			outPath = args[i+1]
+			i++
+		default:
+			exitErr(cerr.Usage("unknown export flag: %s", args[i]))
+		}
+	}
+
+	manifest, err := export.Archive(bundlePath, outPath)
+	if err != nil {
+		exitErr(cerr.IO(err, "export bundle %s", bundlePath))
+	}
+
+	manifestJSON, err := export.ManifestToJSON(manifest)
+	if err != nil {
+		exitErr(cerr.Internal(err, "marshal manifest"))
+	}
+
+	outputJSON(map[string]any{
+		"command":  "export",
+		"bundle":   manifest.Bundle,
+		"archive":  manifest.Archive,
+		"manifest": json.RawMessage(manifestJSON),
+	})
+}
+
+// --- sign ---
+
+func runSign(args []string) {
+	if len(args) == 0 {
+		exitErr(cerr.Usage("usage: okf sign <archive> <keygen|sign|verify> [options]"))
+	}
+	archivePath := args[0]
+	if len(args) < 2 {
+		exitErr(cerr.Usage("usage: okf sign <archive> <keygen|sign|verify> [options]"))
+	}
+	action := args[1]
+	rest := args[2:]
+
+	switch action {
+	case "keygen":
+		runSignKeygen()
+	case "sign":
+		runSignSign(archivePath, rest)
+	case "verify":
+		runSignVerify(archivePath, rest)
+	default:
+		exitErr(cerr.Usage("unknown sign action: %s (use keygen, sign, or verify)", action))
+	}
+}
+
+func runSignKeygen() {
+	kp, err := sign.GenerateKeyPair()
+	if err != nil {
+		exitErr(cerr.Internal(err, "generate key pair"))
+	}
+
+	kpJSON, err := sign.KeyPairToJSON(kp)
+	if err != nil {
+		exitErr(cerr.Internal(err, "marshal key pair"))
+	}
+
+	outputJSON(map[string]any{
+		"command":  "sign",
+		"action":   "keygen",
+		"algorithm": "ML-KEM-768",
+		"keypair":   json.RawMessage(kpJSON),
+	})
+}
+
+func runSignSign(archivePath string, rest []string) {
+	var pubKeyHex, sigOutPath string
+	for i := 0; i < len(rest); i++ {
+		switch rest[i] {
+		case "--pub", "--public-key":
+			if i+1 >= len(rest) {
+				exitErr(cerr.Usage("--pub requires a value"))
+			}
+			pubKeyHex = rest[i+1]
+			i++
+		case "-o", "--output":
+			if i+1 >= len(rest) {
+				exitErr(cerr.Usage("-o requires a value"))
+			}
+			sigOutPath = rest[i+1]
+			i++
+		default:
+			exitErr(cerr.Usage("unknown sign flag: %s", rest[i]))
+		}
+	}
+	if pubKeyHex == "" {
+		exitErr(cerr.Usage("usage: okf sign <archive> sign --pub <public-key-hex> [-o <sig.json>]"))
+	}
+
+	sig, err := sign.Sign(archivePath, pubKeyHex)
+	if err != nil {
+		exitErr(cerr.Internal(err, "sign archive %s", archivePath))
+	}
+
+	sigJSON, err := sign.SignatureToJSON(sig)
+	if err != nil {
+		exitErr(cerr.Internal(err, "marshal signature"))
+	}
+
+	// If -o is given, write the signature to a file for later verification.
+	if sigOutPath != "" {
+		if err := os.WriteFile(sigOutPath, sigJSON, 0o644); err != nil {
+			exitErr(cerr.IO(err, "write signature %s", sigOutPath))
+		}
+	}
+
+	outputJSON(map[string]any{
+		"command":   "sign",
+		"action":    "sign",
+		"archive":   archivePath,
+		"signature": json.RawMessage(sigJSON),
+	})
+}
+
+func runSignVerify(archivePath string, rest []string) {
+	var privKeyHex, sigPath string
+	for i := 0; i < len(rest); i++ {
+		switch rest[i] {
+		case "--priv", "--private-key":
+			if i+1 >= len(rest) {
+				exitErr(cerr.Usage("--priv requires a value"))
+			}
+			privKeyHex = rest[i+1]
+			i++
+		case "--sig", "--signature":
+			if i+1 >= len(rest) {
+				exitErr(cerr.Usage("--sig requires a value"))
+			}
+			sigPath = rest[i+1]
+			i++
+		default:
+			exitErr(cerr.Usage("unknown verify flag: %s", rest[i]))
+		}
+	}
+	if privKeyHex == "" {
+		exitErr(cerr.Usage("usage: okf sign <archive> verify --priv <private-key-hex> --sig <signature.json>"))
+	}
+	if sigPath == "" {
+		exitErr(cerr.Usage("usage: okf sign <archive> verify --priv <private-key-hex> --sig <signature.json>"))
+	}
+
+	sigData, err := os.ReadFile(sigPath)
+	if err != nil {
+		exitErr(cerr.IO(err, "read signature %s", sigPath))
+	}
+
+	var sig sign.Signature
+	if err := json.Unmarshal(sigData, &sig); err != nil {
+		exitErr(cerr.Validation("parse signature: %s", err))
+	}
+
+	if err := sign.Verify(archivePath, &sig, privKeyHex); err != nil {
+		exitErr(cerr.Validation("%s", err))
+	}
+
+	outputJSON(map[string]any{
+		"command":  "sign",
+		"action":   "verify",
+		"archive":  archivePath,
+		"verified": true,
+		"algorithm": sig.Algorithm,
+	})
+}
+
 // --- schema ---
 
 // schemaFlag describes a single flag for machine consumption.
@@ -565,6 +755,33 @@ func allSchemaCommands() []schemaCommand {
 			Args:   []schemaArg{{Name: "bundle", Required: true}},
 			Stdout: "json",
 			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeIO, cerr.ExitCodeUsage},
+		},
+		{
+			Name:  "export",
+			Short: "Export entire bundle as a .okf tar.gz archive",
+			Long:  "Creates a deterministic tar.gz archive of every file in the bundle (sorted by path for reproducibility). Outputs a manifest with per-file SHA-256 hashes and total archive hash.",
+			Flags: []schemaFlag{
+				{Name: "output", Short: "o", Type: "string", Default: "<bundle>.okf", Description: "output archive path"},
+			},
+			Args: []schemaArg{{Name: "bundle", Required: true}},
+			Stdout: "json",
+			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeIO, cerr.ExitCodeUsage},
+		},
+		{
+			Name:  "sign",
+			Short: "Post-quantum sign/verify archives with ML-KEM-768 via HPKE",
+			Long:  "Subcommands: 'keygen' generates an ML-KEM-768 key pair. 'sign' seals the archive hash with HPKE using the public key. 'verify' opens the HPKE ciphertext with the private key and confirms the archive hash matches. Uses crypto/hpke with ML-KEM-768 (FIPS 203) — no external dependencies.",
+			Args: []schemaArg{
+				{Name: "archive", Required: true},
+				{Name: "action", Required: true},
+			},
+			Flags: []schemaFlag{
+				{Name: "pub", Type: "string", Default: "", Description: "hex-encoded ML-KEM-768 public key (for sign)"},
+				{Name: "priv", Type: "string", Default: "", Description: "hex-encoded ML-KEM-768 private key (for verify)"},
+				{Name: "sig", Type: "string", Default: "", Description: "path to signature JSON file (for verify)"},
+			},
+			Stdout: "json",
+			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeValidation, cerr.ExitCodeInternal, cerr.ExitCodeIO, cerr.ExitCodeUsage},
 		},
 		{
 			Name:   "version",
