@@ -21,12 +21,12 @@ func Create(dir string) error {
 		return fmt.Errorf("path exists and is not a directory: %s", dir)
 	}
 
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0750); err != nil {
 		return fmt.Errorf("create directory: %w", err)
 	}
 
 	for _, sub := range standardSubdirs {
-		if err := os.MkdirAll(filepath.Join(dir, sub), 0755); err != nil {
+		if err := os.MkdirAll(filepath.Join(dir, sub), 0750); err != nil {
 			return fmt.Errorf("create subdir %s: %w", sub, err)
 		}
 	}
