@@ -111,13 +111,18 @@ func validateLinks(r *Report, b *bundle.Bundle) {
 				continue // external URL or non-concept link, skip
 			}
 			if !b.HasConcept(target) {
-				// The link didn't resolve as written. Check whether the raw
+				// The link didn't resolve as written. Check whether the same
 				// target would resolve as an absolute (bundle-root-relative)
 				// path; if so, the author likely intended an absolute link.
-				if absTarget := absoluteTarget(link.Target); absTarget != "" && b.HasConcept(absTarget) {
+				// resolveLink with an empty fromConceptID yields the bundle-root
+				// interpretation. This only differs from the as-written result
+				// for relative links (a leading-/ target resolves identically
+				// regardless of fromConceptID), so an already-absolute broken
+				// link correctly falls through to the plain message below.
+				if absTarget := resolveLink("", link); absTarget != "" && absTarget != target && b.HasConcept(absTarget) {
 					r.add(c.ID, SeverityError, fmt.Sprintf(
-						"broken link: [%s] -> %s (relative links resolve from the current concept's directory; use /%s for an absolute path)",
-						link.Text, link.Target, absTarget))
+						"broken link: [%s] -> %s (relative links resolve from the current concept's directory; use /%s%s for an absolute path)",
+						link.Text, link.Target, absTarget, fragmentOf(link.Target)))
 				} else {
 					r.add(c.ID, SeverityError, fmt.Sprintf(
 						"broken link: [%s] -> %s (concept %s not found)",
@@ -128,28 +133,16 @@ func validateLinks(r *Report, b *bundle.Bundle) {
 	}
 }
 
-// absoluteTarget converts a raw link target into the concept ID it would
-// have if treated as an absolute (bundle-root-relative) path. It strips a
-// leading /, removes any fragment (#) or query (?), and drops a trailing
-// .md suffix. It returns "" for external URLs or empty targets.
-func absoluteTarget(raw string) string {
-	target := strings.TrimSpace(raw)
-	if target == "" || isExternalURL(target) {
-		return ""
+// fragmentOf returns the #fragment portion of a raw link target (including the
+// leading #), or "" if there is none. Fragments are ignored for concept
+// resolution, but preserving them in a suggested path keeps the hint faithful
+// to what the author wrote (e.g. organizations/cloaked#section suggests
+// /organizations/cloaked#section).
+func fragmentOf(raw string) string {
+	if idx := strings.IndexByte(raw, '#'); idx != -1 {
+		return raw[idx:]
 	}
-	// Strip any fragment (#section) or query (?query).
-	if idx := strings.IndexAny(target, "#?"); idx != -1 {
-		target = target[:idx]
-	}
-	if target == "" {
-		return ""
-	}
-	target = strings.TrimPrefix(target, "/")
-	target = strings.TrimSuffix(target, ".md")
-	if target == "" {
-		return ""
-	}
-	return concept.ConceptID(target)
+	return ""
 }
 
 // Link represents a markdown link found in a concept body.

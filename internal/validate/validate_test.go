@@ -148,6 +148,59 @@ func TestValidateLinks_NonexistentConceptNoAbsolutePathSuggestion(t *testing.T) 
 	}
 }
 
+func TestValidateLinks_AlreadyAbsoluteBrokenNoSuggestion(t *testing.T) {
+	// A link that is already written as an absolute path (/...) but does not
+	// resolve must NOT produce an "absolute path" suggestion — there is
+	// nothing to suggest, so it falls through to the plain broken-link message.
+	b := testBundle(t, map[string]string{
+		"pages/about.md": "---\ntype: Page\ntitle: About\n---\n\nSee [Cloaked](/organizations/cloaked).",
+	})
+
+	r := &Report{}
+	validateLinks(r, b)
+
+	var msg string
+	for _, f := range r.Findings {
+		if f.ConceptID == "pages/about" && strings.Contains(f.Message, "broken link") {
+			msg = f.Message
+			break
+		}
+	}
+	if msg == "" {
+		t.Fatalf("no broken-link finding for pages/about: %+v", r.Findings)
+	}
+	if strings.Contains(msg, "absolute path") {
+		t.Errorf("error %q should not suggest an absolute path for an already-absolute broken link", msg)
+	}
+}
+
+func TestValidateLinks_SuggestionPreservesFragment(t *testing.T) {
+	// A broken relative link that carries a #fragment should retain the
+	// fragment in the suggested absolute path (fragments are ignored for
+	// resolution but kept in the displayed hint).
+	b := testBundle(t, map[string]string{
+		"pages/about.md":           "---\ntype: Page\ntitle: About\n---\n\nSee [Cloaked](organizations/cloaked#section).",
+		"organizations/cloaked.md": "---\ntype: Org\ntitle: Cloaked\n---\n\nbody",
+	})
+
+	r := &Report{}
+	validateLinks(r, b)
+
+	var msg string
+	for _, f := range r.Findings {
+		if f.ConceptID == "pages/about" && strings.Contains(f.Message, "broken link") {
+			msg = f.Message
+			break
+		}
+	}
+	if msg == "" {
+		t.Fatalf("no broken-link finding for pages/about: %+v", r.Findings)
+	}
+	if !strings.Contains(msg, "use /organizations/cloaked#section for an absolute path") {
+		t.Errorf("error %q does not preserve the #fragment in the suggested path", msg)
+	}
+}
+
 // --- helpers ---
 
 func testBundle(t *testing.T, files map[string]string) *bundle.Bundle {
