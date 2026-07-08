@@ -57,6 +57,54 @@ func TestBuild_FrontmatterAndBodyDeduped(t *testing.T) {
 	}
 }
 
+func TestBuild_FrontmatterLinkScalar(t *testing.T) {
+	// A single-string `links: /b` (scalar, not a sequence) must load fine and
+	// produce the same edge as the sequence form.
+	b := testBundle(t, map[string]string{
+		"a.md": "---\ntype: T\ntitle: A\nlinks: /b\n---\n\nNo body links here.",
+		"b.md": "---\ntype: T\ntitle: B\n---\n\nbody",
+	})
+
+	g := Build(b)
+	if len(g.Edges) != 1 {
+		t.Fatalf("got %d edges, want 1 (from scalar frontmatter link)", len(g.Edges))
+	}
+	if g.Edges[0].From != "a" || g.Edges[0].To != "b" {
+		t.Errorf("edge = %v, want a->b", g.Edges[0])
+	}
+}
+
+func TestBuild_FrontmatterLinksDeduped(t *testing.T) {
+	// Duplicate frontmatter links collapse to a single edge.
+	b := testBundle(t, map[string]string{
+		"a.md": "---\ntype: T\ntitle: A\nlinks:\n  - /b\n  - /b\n---\n\nbody",
+		"b.md": "---\ntype: T\ntitle: B\n---\n\nbody",
+	})
+
+	g := Build(b)
+	if len(g.Edges) != 1 {
+		t.Fatalf("got %d edges, want 1 (duplicate frontmatter links deduped)", len(g.Edges))
+	}
+	if len(g.Backlinks["b"]) != 1 {
+		t.Errorf("backlinks[b] = %v, want a single entry", g.Backlinks["b"])
+	}
+}
+
+func TestBuild_NoSelfEdge(t *testing.T) {
+	// A concept linking to itself must not produce an a->a self-edge.
+	b := testBundle(t, map[string]string{
+		"a.md": "---\ntype: T\ntitle: A\nlinks:\n  - /a\n---\n\nAlso [self](a.md).",
+	})
+
+	g := Build(b)
+	if len(g.Edges) != 0 {
+		t.Fatalf("got %d edges, want 0 (no self-edge): %+v", len(g.Edges), g.Edges)
+	}
+	if len(g.Backlinks["a"]) != 0 {
+		t.Errorf("backlinks[a] = %v, want empty (no self-backlink)", g.Backlinks["a"])
+	}
+}
+
 // --- helpers ---
 
 func testBundle(t *testing.T, files map[string]string) *bundle.Bundle {

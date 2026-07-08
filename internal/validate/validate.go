@@ -97,7 +97,14 @@ func validateBody(r *Report, c *concept.Concept) {
 // are checked.
 func validateLinks(r *Report, b *bundle.Bundle) {
 	for _, c := range b.Concepts {
-		links := extractLinks(c.Body)
+		// Validate both body links and frontmatter links, mirroring how graph
+		// and backlinks consume them, so a frontmatter link to a nonexistent
+		// concept is reported instead of being silently dropped.
+		bodyLinks := extractLinks(c.Body)
+		fmLinks := ExtractFrontmatterLinks(c.Frontmatter.Links)
+		links := make([]Link, 0, len(bodyLinks)+len(fmLinks))
+		links = append(links, bodyLinks...)
+		links = append(links, fmLinks...)
 		for _, link := range links {
 			target := resolveLink(c.ID, link)
 			if target == "" {
