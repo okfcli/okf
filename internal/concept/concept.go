@@ -22,7 +22,49 @@ type Frontmatter struct {
 	Resource    string            `yaml:"resource"`
 	Tags        []string          `yaml:"tags"`
 	Timestamp   time.Time         `yaml:"timestamp"`
+	Links       StringList        `yaml:"links"`
 	Extensions  map[string]any    `yaml:",inline"`
+}
+
+// StringList is a []string that unmarshals from YAML flexibly: it accepts both
+// a single scalar string (links: /b) and a sequence of strings (links: [/b, /c]).
+// A missing/empty value stays a nil/empty slice, and a malformed shape (e.g. a
+// mapping) is tolerated as an empty slice rather than failing the whole parse —
+// so one badly-shaped concept cannot take down an entire bundle load.
+type StringList []string
+
+// UnmarshalYAML implements yaml.Unmarshaler, accepting scalar-or-sequence.
+func (s *StringList) UnmarshalYAML(value *yaml.Node) error {
+	switch value.Kind {
+	case yaml.ScalarNode:
+		// A single string, or an explicit null. Treat null as empty.
+		if value.Tag == "!!null" {
+			*s = nil
+			return nil
+		}
+		var single string
+		if err := value.Decode(&single); err != nil {
+			// Non-string scalar (e.g. a number) — tolerate as empty.
+			*s = nil
+			return nil
+		}
+		*s = StringList{single}
+		return nil
+	case yaml.SequenceNode:
+		var list []string
+		if err := value.Decode(&list); err != nil {
+			// A sequence of non-strings — tolerate as empty rather than
+			// failing the entire bundle load.
+			*s = nil
+			return nil
+		}
+		*s = StringList(list)
+		return nil
+	default:
+		// Mapping or any other unexpected shape — tolerate as empty.
+		*s = nil
+		return nil
+	}
 }
 
 // Concept is a parsed concept document.

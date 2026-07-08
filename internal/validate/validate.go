@@ -104,7 +104,14 @@ func validateBody(r *Report, c *concept.Concept) {
 // /organizations/cloaked) so authors can fix the link.
 func validateLinks(r *Report, b *bundle.Bundle) {
 	for _, c := range b.Concepts {
-		links := extractLinks(c.Body)
+		// Validate both body links and frontmatter links, mirroring how graph
+		// and backlinks consume them, so a frontmatter link to a nonexistent
+		// concept is reported instead of being silently dropped.
+		bodyLinks := extractLinks(c.Body)
+		fmLinks := ExtractFrontmatterLinks(c.Frontmatter.Links)
+		links := make([]Link, 0, len(bodyLinks)+len(fmLinks))
+		links = append(links, bodyLinks...)
+		links = append(links, fmLinks...)
 		for _, link := range links {
 			target := resolveLink(c.ID, link)
 			if target == "" {
@@ -164,6 +171,21 @@ type Link struct {
 // by concept resolution.
 func ExtractLinks(body string) []Link {
 	return extractLinks(body)
+}
+
+// ExtractFrontmatterLinks converts a frontmatter "links:" list (concept IDs or
+// absolute /paths) into Link structs. Empty strings are skipped. The Text is
+// empty (frontmatter links have no link text); the Target is preserved as-is,
+// including any leading "/" — ResolveLink handles the stripping.
+func ExtractFrontmatterLinks(links []string) []Link {
+	out := make([]Link, 0, len(links))
+	for _, l := range links {
+		if strings.TrimSpace(l) == "" {
+			continue
+		}
+		out = append(out, Link{Text: "", Target: l})
+	}
+	return out
 }
 
 // extractLinks parses all markdown links [text](target) from a body.

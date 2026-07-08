@@ -72,6 +72,81 @@ func TestResolveLink_WithFragment(t *testing.T) {
 	}
 }
 
+func TestExtractFrontmatterLinks(t *testing.T) {
+	links := ExtractFrontmatterLinks([]string{"/tables/events_", "users", "", "/playbooks/check"})
+	if len(links) != 3 {
+		t.Fatalf("got %d links, want 3 (empty skipped): %+v", len(links), links)
+	}
+	if links[0].Text != "" || links[0].Target != "/tables/events_" {
+		t.Errorf("link[0] = %+v, want Text=\"\" Target=/tables/events_", links[0])
+	}
+	if links[1].Target != "users" {
+		t.Errorf("link[1] target = %q, want users", links[1].Target)
+	}
+	if links[2].Target != "/playbooks/check" {
+		t.Errorf("link[2] target = %q, want /playbooks/check", links[2].Target)
+	}
+}
+
+func TestExtractFrontmatterLinks_Empty(t *testing.T) {
+	if links := ExtractFrontmatterLinks(nil); len(links) != 0 {
+		t.Fatalf("got %d links, want 0", len(links))
+	}
+	if links := ExtractFrontmatterLinks([]string{}); len(links) != 0 {
+		t.Fatalf("got %d links, want 0", len(links))
+	}
+}
+
+func TestValidate_FrontmatterLinkToNonexistentConcept(t *testing.T) {
+	b := testBundle(t, map[string]string{
+		"a.md": "---\ntype: T\ntitle: A\ndescription: d\ntags: [x]\nlinks:\n  - /does-not-exist\n---\n\nbody",
+	})
+
+	r := Validate(b)
+	found := false
+	for _, f := range r.Findings {
+		if f.Severity == SeverityError && strings.Contains(f.Message, "does-not-exist") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected a broken-link error for the frontmatter link, findings = %+v", r.Findings)
+	}
+}
+
+func TestValidate_FrontmatterLinkResolves(t *testing.T) {
+	b := testBundle(t, map[string]string{
+		"a.md": "---\ntype: T\ntitle: A\ndescription: d\ntags: [x]\nlinks:\n  - /b\n---\n\nbody",
+		"b.md": "---\ntype: T\ntitle: B\ndescription: d\ntags: [x]\n---\n\nbody",
+	})
+
+	r := Validate(b)
+	for _, f := range r.Findings {
+		if f.Severity == SeverityError {
+			t.Fatalf("unexpected error finding for a resolvable frontmatter link: %+v", f)
+		}
+	}
+}
+
+func testBundle(t *testing.T, files map[string]string) *bundle.Bundle {
+	t.Helper()
+	dir := t.TempDir()
+	for path, content := range files {
+		full := filepath.Join(dir, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+	b, err := bundle.Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	return b
+}
+
 func TestNormalizePath(t *testing.T) {
 	tests := []struct {
 		in, want string

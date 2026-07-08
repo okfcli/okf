@@ -96,6 +96,21 @@ func TestBacklinks_DeduplicatesLinks(t *testing.T) {
 	}
 }
 
+func TestBacklinks_FrontmatterLinks(t *testing.T) {
+	b := testBundle(t, map[string]string{
+		"a.md": "---\ntype: T\ntitle: A\nlinks:\n  - /b\n---\n\nNo body links here.",
+		"b.md": "---\ntype: T\ntitle: B\n---\n\nbody",
+	})
+
+	links := Backlinks(b, "b")
+	if len(links) != 1 {
+		t.Fatalf("got %d backlinks, want 1 (from frontmatter link)", len(links))
+	}
+	if links[0] != "a" {
+		t.Errorf("got %s, want a", links[0])
+	}
+}
+
 // --- helpers ---
 
 func testBundle(t *testing.T, files map[string]string) *bundle.Bundle {
