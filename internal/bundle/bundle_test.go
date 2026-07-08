@@ -3,9 +3,11 @@ package bundle
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/okfcli/okf/internal/concept"
+	"github.com/okfcli/okf/internal/index"
 )
 
 func TestLoad_ValidBundle(t *testing.T) {
@@ -117,5 +119,59 @@ func TestLoad_ReservedIndexNoFrontmatter(t *testing.T) {
 	// Body should contain the raw file content.
 	if found.Body != indexContent {
 		t.Errorf("Body = %q, want %q", found.Body, indexContent)
+	}
+}
+
+// TestLoad_GeneratedIndexIsDiscoverable is an end-to-end regression test for
+// the user-visible symptom: after `okf index` generates index.md files (which
+// have no frontmatter), reloading the bundle must expose them in b.Reserved so
+// runIndex reports a non-empty indexes_written. Previously these files were
+// silently dropped and the index command reported zero indexes.
+func TestLoad_GeneratedIndexIsDiscoverable(t *testing.T) {
+	tmp := t.TempDir()
+
+	conceptDir := filepath.Join(tmp, "tables")
+	if err := os.MkdirAll(conceptDir, 0o755); err != nil {
+		t.Fatalf("mkdir tables: %v", err)
+	}
+	conceptContent := "---\ntype: BigQuery Table\ntitle: Events\n---\n\nEvent data.\n"
+	if err := os.WriteFile(filepath.Join(conceptDir, "events_.md"), []byte(conceptContent), 0o644); err != nil {
+		t.Fatalf("write concept: %v", err)
+	}
+
+	// Generate index.md files the same way `okf index` does.
+	if err := index.Generate(tmp); err != nil {
+		t.Fatalf("index.Generate: %v", err)
+	}
+
+	b, err := Load(tmp)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	// Mirror runIndex's collection logic.
+	var indexFiles []string
+	for _, r := range b.Reserved {
+		if r.ID == "index" || strings.HasSuffix(r.ID, "/index") {
+			indexFiles = append(indexFiles, r.Path)
+		}
+	}
+	if len(indexFiles) == 0 {
+		t.Fatalf("expected at least one generated index in Reserved, got %d reserved entries", len(b.Reserved))
+	}
+
+	// The tables/ subdirectory index must be among them and carry its body.
+	var tablesIndex *concept.Concept
+	for _, r := range b.Reserved {
+		if r.ID == "tables/index" {
+			tablesIndex = r
+			break
+		}
+	}
+	if tablesIndex == nil {
+		t.Fatal("expected Reserved to contain tables/index")
+	}
+	if tablesIndex.Body == "" {
+		t.Error("generated index Body is empty, want raw index content")
 	}
 }
