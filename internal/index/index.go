@@ -83,7 +83,7 @@ func generateForDir(root, dir string) error {
 	if relDir == "." {
 		sb.WriteString("Bundle root.\n\n")
 	} else {
-		sb.WriteString(fmt.Sprintf("Directory: `%s/`\n\n", relDir))
+		fmt.Fprintf(&sb, "Directory: `%s/`\n\n", relDir)
 	}
 
 	if len(concepts) > 0 {
@@ -95,7 +95,7 @@ func generateForDir(root, dir string) error {
 			if len(desc) > 80 {
 				desc = desc[:77] + "..."
 			}
-			sb.WriteString(fmt.Sprintf("| [%s](%s) | %s | %s |\n", c.title, c.filename, c.typeName, desc))
+			fmt.Fprintf(&sb, "| [%s](%s) | %s | %s |\n", c.title, c.filename, c.typeName, desc)
 		}
 		sb.WriteString("\n")
 	}
@@ -103,7 +103,7 @@ func generateForDir(root, dir string) error {
 	if len(subdirs) > 0 {
 		sb.WriteString("## Subdirectories\n\n")
 		for _, s := range subdirs {
-			sb.WriteString(fmt.Sprintf("- [%s/](%s/index.md)\n", s, s))
+			fmt.Fprintf(&sb, "- [%s/](%s/index.md)\n", s, s)
 		}
 		sb.WriteString("\n")
 	}
@@ -140,7 +140,7 @@ func parseConceptInfo(path string) (conceptInfo, error) {
 // other than reserved ones.
 func hasMarkdownFiles(dir string) bool {
 	found := false
-	filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
+	_ = filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}

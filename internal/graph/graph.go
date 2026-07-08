@@ -117,11 +117,11 @@ func resolveLink(fromConceptID string, link validate.Link) string {
 func (g *Graph) Summary() string {
 	s := g.Stats()
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("nodes: %d  edges: %d  isolated: %d  max-backlinks: %d\n",
-		s.NodeCount, s.EdgeCount, s.IsolatedNodes, s.MaxBacklinks))
+	fmt.Fprintf(&sb, "nodes: %d  edges: %d  isolated: %d  max-backlinks: %d\n",
+		s.NodeCount, s.EdgeCount, s.IsolatedNodes, s.MaxBacklinks)
 	if s.NodeCount > 0 && s.EdgeCount > 0 {
 		density := float64(s.EdgeCount) / float64(s.NodeCount*(s.NodeCount-1)) * 100
-		sb.WriteString(fmt.Sprintf("graph density: %.2f%%\n", density))
+		fmt.Fprintf(&sb, "graph density: %.2f%%\n", density)
 	}
 	return sb.String()
 }
