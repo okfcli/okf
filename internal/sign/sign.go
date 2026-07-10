@@ -133,9 +133,11 @@ func hashFile(path string) ([]byte, error) {
 	return h.Sum(nil), nil
 }
 
-// KeyPairToJSON returns the key pair as pretty-printed JSON.
+// KeyPairToJSON returns the key pair as pretty-printed JSON. Emitting the
+// private key is the purpose of keygen; the caller is responsible for
+// storing it securely.
 func KeyPairToJSON(kp *KeyPair) ([]byte, error) {
-	return json.MarshalIndent(kp, "", "  ")
+	return json.MarshalIndent(kp, "", "  ") // #nosec G117 -- keygen intentionally outputs the private key
 }
 
 // SignatureToJSON returns the signature as pretty-printed JSON.

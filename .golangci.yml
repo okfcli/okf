@@ -47,6 +47,7 @@ linters:
         - G104
         - G304
         - G306
+        - G703 # CLI reads/writes user-supplied paths from argv by design
 
   exclusions:
     rules:
