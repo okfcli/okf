@@ -17,11 +17,13 @@ import (
 	"github.com/okfcli/okf/internal/backlinks"
 	"github.com/okfcli/okf/internal/bundle"
 	"github.com/okfcli/okf/internal/cerr"
+	"github.com/okfcli/okf/internal/export"
 	"github.com/okfcli/okf/internal/graph"
 	"github.com/okfcli/okf/internal/index"
 	"github.com/okfcli/okf/internal/initbundle"
 	"github.com/okfcli/okf/internal/search"
 	"github.com/okfcli/okf/internal/show"
+	"github.com/okfcli/okf/internal/sign"
 	"github.com/okfcli/okf/internal/validate"
 )
 
@@ -66,12 +68,16 @@ func main() {
 		runInit(rest)
 	case "backlinks":
 		runBacklinks(rest)
+	case "export":
+		runExport(rest)
+	case "sign":
+		runSign(rest)
 	default:
 		exitErr(cerr.Usage("unknown command: %s", cmd))
 	}
 }
 
-const usage = `okf — Open Knowledge Format toolkit (v%s)
+const usage = `okf - Open Knowledge Format toolkit (v%s)
 
 Usage:
   okf <command> <bundle-path>
@@ -89,6 +95,8 @@ Commands:
   search <bundle> [filters]  Search concepts by tag, type, or text
   backlinks <bundle> <id>    List concepts that link to a given concept
   graph <bundle>             Print cross-link graph statistics
+  export <bundle> [-o file]  Export entire bundle as a .okf tar.gz archive
+  sign <archive> <action>    Post-quantum sign/verify with ML-DSA-65 (FIPS 204)
   version                     Print version
 
 Exit codes:
@@ -355,11 +363,11 @@ func runSearch(args []string) {
 	}
 
 	outputJSON(map[string]any{
-		"command":  "search",
-		"bundle":   b.Root,
-		"filters":  f,
-		"results":  concepts,
-		"count":    len(results),
+		"command": "search",
+		"bundle":  b.Root,
+		"filters": f,
+		"results": concepts,
+		"count":   len(results),
 	})
 }
 
@@ -411,6 +419,185 @@ func runBacklinks(args []string) {
 	})
 }
 
+// --- export ---
+
+func runExport(args []string) {
+	if len(args) == 0 {
+		exitErr(cerr.Usage("usage: okf export <bundle> [-o <output-file>]"))
+	}
+	bundlePath := args[0]
+	outPath := bundlePath + ".okf"
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
+		case "-o", "--output":
+			if i+1 >= len(args) {
+				exitErr(cerr.Usage("-o requires a value"))
+			}
+			outPath = args[i+1]
+			i++
+		default:
+			exitErr(cerr.Usage("unknown export flag: %s", args[i]))
+		}
+	}
+
+	manifest, err := export.Archive(bundlePath, outPath)
+	if err != nil {
+		exitErr(cerr.IO(err, "export bundle %s", bundlePath))
+	}
+
+	manifestJSON, err := export.ManifestToJSON(manifest)
+	if err != nil {
+		exitErr(cerr.Internal(err, "marshal manifest"))
+	}
+
+	outputJSON(map[string]any{
+		"command":  "export",
+		"bundle":   manifest.Bundle,
+		"archive":  manifest.Archive,
+		"manifest": json.RawMessage(manifestJSON),
+	})
+}
+
+// --- sign ---
+
+func runSign(args []string) {
+	if len(args) == 0 {
+		exitErr(cerr.Usage("usage: okf sign <archive> <keygen|sign|verify> [options]"))
+	}
+	archivePath := args[0]
+	if len(args) < 2 {
+		exitErr(cerr.Usage("usage: okf sign <archive> <keygen|sign|verify> [options]"))
+	}
+	action := args[1]
+	rest := args[2:]
+
+	switch action {
+	case "keygen":
+		runSignKeygen()
+	case "sign":
+		runSignSign(archivePath, rest)
+	case "verify":
+		runSignVerify(archivePath, rest)
+	default:
+		exitErr(cerr.Usage("unknown sign action: %s (use keygen, sign, or verify)", action))
+	}
+}
+
+func runSignKeygen() {
+	kp, err := sign.GenerateKeyPair()
+	if err != nil {
+		exitErr(cerr.Internal(err, "generate key pair"))
+	}
+
+	kpJSON, err := sign.KeyPairToJSON(kp)
+	if err != nil {
+		exitErr(cerr.Internal(err, "marshal key pair"))
+	}
+
+	outputJSON(map[string]any{
+		"command":   "sign",
+		"action":    "keygen",
+		"algorithm": sign.Algorithm,
+		"keypair":   json.RawMessage(kpJSON),
+	})
+}
+
+func runSignSign(archivePath string, rest []string) {
+	var privKeyHex, sigOutPath string
+	for i := 0; i < len(rest); i++ {
+		switch rest[i] {
+		case "--priv", "--private-key":
+			if i+1 >= len(rest) {
+				exitErr(cerr.Usage("--priv requires a value"))
+			}
+			privKeyHex = rest[i+1]
+			i++
+		case "-o", "--output":
+			if i+1 >= len(rest) {
+				exitErr(cerr.Usage("-o requires a value"))
+			}
+			sigOutPath = rest[i+1]
+			i++
+		default:
+			exitErr(cerr.Usage("unknown sign flag: %s", rest[i]))
+		}
+	}
+	if privKeyHex == "" {
+		exitErr(cerr.Usage("usage: okf sign <archive> sign --priv <private-key-hex> [-o <sig.json>]"))
+	}
+
+	sig, err := sign.Sign(archivePath, privKeyHex)
+	if err != nil {
+		exitErr(cerr.Internal(err, "sign archive %s", archivePath))
+	}
+
+	sigJSON, err := sign.SignatureToJSON(sig)
+	if err != nil {
+		exitErr(cerr.Internal(err, "marshal signature"))
+	}
+
+	// If -o is given, write the signature to a file for later verification.
+	if sigOutPath != "" {
+		if err := os.WriteFile(sigOutPath, sigJSON, 0o644); err != nil {
+			exitErr(cerr.IO(err, "write signature %s", sigOutPath))
+		}
+	}
+
+	outputJSON(map[string]any{
+		"command":   "sign",
+		"action":    "sign",
+		"archive":   archivePath,
+		"signature": json.RawMessage(sigJSON),
+	})
+}
+
+func runSignVerify(archivePath string, rest []string) {
+	var pubKeyHex, sigPath string
+	for i := 0; i < len(rest); i++ {
+		switch rest[i] {
+		case "--pub", "--public-key":
+			if i+1 >= len(rest) {
+				exitErr(cerr.Usage("--pub requires a value"))
+			}
+			pubKeyHex = rest[i+1]
+			i++
+		case "--sig", "--signature":
+			if i+1 >= len(rest) {
+				exitErr(cerr.Usage("--sig requires a value"))
+			}
+			sigPath = rest[i+1]
+			i++
+		default:
+			exitErr(cerr.Usage("unknown verify flag: %s", rest[i]))
+		}
+	}
+	if pubKeyHex == "" || sigPath == "" {
+		exitErr(cerr.Usage("usage: okf sign <archive> verify --pub <public-key-hex> --sig <signature.json>"))
+	}
+
+	sigData, err := os.ReadFile(sigPath)
+	if err != nil {
+		exitErr(cerr.IO(err, "read signature %s", sigPath))
+	}
+
+	var sig sign.Signature
+	if err := json.Unmarshal(sigData, &sig); err != nil {
+		exitErr(cerr.Validation("parse signature: %s", err))
+	}
+
+	if err := sign.Verify(archivePath, &sig, pubKeyHex); err != nil {
+		exitErr(cerr.Validation("%s", err))
+	}
+
+	outputJSON(map[string]any{
+		"command":   "sign",
+		"action":    "verify",
+		"archive":   archivePath,
+		"verified":  true,
+		"algorithm": sig.Algorithm,
+	})
+}
+
 // --- schema ---
 
 // schemaFlag describes a single flag for machine consumption.
@@ -441,10 +628,10 @@ type schemaCommand struct {
 
 // schemaRoot is the top-level schema output.
 type schemaRoot struct {
-	Name        string          `json:"name"`
-	Version     string          `json:"version"`
-	Description string          `json:"description"`
-	Commands    []schemaCommand `json:"commands"`
+	Name        string             `json:"name"`
+	Version     string             `json:"version"`
+	Description string             `json:"description"`
+	Commands    []schemaCommand    `json:"commands"`
 	ExitCodes   []cerr.ExitCodeDoc `json:"exit_codes"`
 }
 
@@ -474,68 +661,68 @@ func buildSchemaRoot() schemaRoot {
 func allSchemaCommands() []schemaCommand {
 	return []schemaCommand{
 		{
-			Name:   "schema",
-			Short:  "Print machine-readable CLI metadata as JSON",
-			Long:   "Outputs a JSON document describing every command, its flags, arguments, output format, and exit codes. Pass a command name to describe just that command.",
-			Args:   []schemaArg{{Name: "command", Required: false}},
-			Stdout: "json",
+			Name:      "schema",
+			Short:     "Print machine-readable CLI metadata as JSON",
+			Long:      "Outputs a JSON document describing every command, its flags, arguments, output format, and exit codes. Pass a command name to describe just that command.",
+			Args:      []schemaArg{{Name: "command", Required: false}},
+			Stdout:    "json",
 			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeUsage},
 		},
 		{
-			Name:   "init",
-			Short:  "Create a new empty OKF bundle",
-			Long:   "Creates a bundle directory with standard subdirectories (tables, datasets, playbooks), a root index.md, and a .gitignore. Fails if the directory already exists.",
-			Args:   []schemaArg{{Name: "bundle", Required: true}},
-			Stdout: "json",
+			Name:      "init",
+			Short:     "Create a new empty OKF bundle",
+			Long:      "Creates a bundle directory with standard subdirectories (tables, datasets, playbooks), a root index.md, and a .gitignore. Fails if the directory already exists.",
+			Args:      []schemaArg{{Name: "bundle", Required: true}},
+			Stdout:    "json",
 			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeIO, cerr.ExitCodeUsage},
 		},
 		{
-			Name:   "validate",
-			Short:  "Validate a bundle against the OKF spec",
-			Long:   "Checks every concept for required frontmatter (type), recommended fields (title, description, tags), non-empty body, and valid cross-links. Exits 1 if any errors are found.",
-			Args:   []schemaArg{{Name: "bundle", Required: true}},
-			Stdout: "json",
+			Name:      "validate",
+			Short:     "Validate a bundle against the OKF spec",
+			Long:      "Checks every concept for required frontmatter (type), recommended fields (title, description, tags), non-empty body, and valid cross-links. Exits 1 if any errors are found.",
+			Args:      []schemaArg{{Name: "bundle", Required: true}},
+			Stdout:    "json",
 			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeValidation, cerr.ExitCodeIO, cerr.ExitCodeUsage},
 		},
 		{
-			Name:   "lint",
-			Short:  "Check recommended fields and style (warnings only)",
-			Long:   "Same checks as validate but only emits warnings — errors are suppressed. Exits 0 even with warnings.",
-			Args:   []schemaArg{{Name: "bundle", Required: true}},
-			Stdout: "json",
+			Name:      "lint",
+			Short:     "Check recommended fields and style (warnings only)",
+			Long:      "Same checks as validate but only emits warnings; errors are suppressed. Exits 0 even with warnings.",
+			Args:      []schemaArg{{Name: "bundle", Required: true}},
+			Stdout:    "json",
 			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeIO, cerr.ExitCodeUsage},
 		},
 		{
-			Name:   "index",
-			Short:  "Generate index.md files (progressive disclosure)",
-			Long:   "Writes index.md into every directory containing concept documents, providing progressive disclosure per OKF spec §6.",
-			Args:   []schemaArg{{Name: "bundle", Required: true}},
-			Stdout: "json",
+			Name:      "index",
+			Short:     "Generate index.md files (progressive disclosure)",
+			Long:      "Writes index.md into every directory containing concept documents, providing progressive disclosure per OKF spec §6.",
+			Args:      []schemaArg{{Name: "bundle", Required: true}},
+			Stdout:    "json",
 			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeIO, cerr.ExitCodeUsage},
 		},
 		{
-			Name:   "list",
-			Short:  "List all concepts in the bundle",
-			Long:   "Lists every concept document with its ID, type, and title.",
-			Args:   []schemaArg{{Name: "bundle", Required: true}},
-			Stdout: "json",
+			Name:      "list",
+			Short:     "List all concepts in the bundle",
+			Long:      "Lists every concept document with its ID, type, and title.",
+			Args:      []schemaArg{{Name: "bundle", Required: true}},
+			Stdout:    "json",
 			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeIO, cerr.ExitCodeUsage},
 		},
 		{
-			Name:   "show",
-			Short:  "Show a single concept's full content",
-			Long:   "Returns the concept's ID, file path, frontmatter (type, title, description, resource, tags), and markdown body as JSON.",
+			Name:  "show",
+			Short: "Show a single concept's full content",
+			Long:  "Returns the concept's ID, file path, frontmatter (type, title, description, resource, tags), and markdown body as JSON.",
 			Args: []schemaArg{
 				{Name: "bundle", Required: true},
 				{Name: "concept-id", Required: true},
 			},
-			Stdout: "json",
+			Stdout:    "json",
 			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeValidation, cerr.ExitCodeIO, cerr.ExitCodeUsage},
 		},
 		{
-			Name:   "search",
-			Short:  "Search concepts by tag, type, or text",
-			Long:   "Filters concepts in a bundle by tag (--tag), frontmatter type (--type), or full-text search in title, description, and body (--text). Multiple filters are AND-combined. With no filters, returns all concepts.",
+			Name:  "search",
+			Short: "Search concepts by tag, type, or text",
+			Long:  "Filters concepts in a bundle by tag (--tag), frontmatter type (--type), or full-text search in title, description, and body (--text). Multiple filters are AND-combined. With no filters, returns all concepts.",
 			Flags: []schemaFlag{
 				{Name: "tag", Type: "string", Default: "", Description: "filter by tag (case-insensitive)"},
 				{Name: "type", Type: "string", Default: "", Description: "filter by frontmatter type (case-insensitive)"},
@@ -544,32 +731,59 @@ func allSchemaCommands() []schemaCommand {
 			Args: []schemaArg{
 				{Name: "bundle", Required: true},
 			},
-			Stdout: "json",
+			Stdout:    "json",
 			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeIO, cerr.ExitCodeUsage},
 		},
 		{
-			Name:   "backlinks",
-			Short:  "List concepts that link to a given concept",
-			Long:   "Returns the IDs of all concepts in the bundle that contain a markdown link to the specified concept. Deduplicates multiple links from the same source.",
+			Name:  "backlinks",
+			Short: "List concepts that link to a given concept",
+			Long:  "Returns the IDs of all concepts in the bundle that contain a markdown link to the specified concept. Deduplicates multiple links from the same source.",
 			Args: []schemaArg{
 				{Name: "bundle", Required: true},
 				{Name: "concept-id", Required: true},
 			},
-			Stdout: "json",
+			Stdout:    "json",
 			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeIO, cerr.ExitCodeUsage},
 		},
 		{
-			Name:   "graph",
-			Short:  "Print cross-link graph statistics",
-			Long:   "Builds the directed cross-link graph from concept markdown links and prints nodes, edges, and summary statistics.",
-			Args:   []schemaArg{{Name: "bundle", Required: true}},
-			Stdout: "json",
+			Name:      "graph",
+			Short:     "Print cross-link graph statistics",
+			Long:      "Builds the directed cross-link graph from concept markdown links and prints nodes, edges, and summary statistics.",
+			Args:      []schemaArg{{Name: "bundle", Required: true}},
+			Stdout:    "json",
 			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeIO, cerr.ExitCodeUsage},
 		},
 		{
-			Name:   "version",
-			Short:  "Print version",
-			Stdout: "json",
+			Name:  "export",
+			Short: "Export entire bundle as a .okf tar.gz archive",
+			Long:  "Creates a deterministic tar.gz archive of every file in the bundle (sorted by path for reproducibility). Outputs a manifest with per-file SHA-256 hashes and total archive hash.",
+			Flags: []schemaFlag{
+				{Name: "output", Short: "o", Type: "string", Default: "<bundle>.okf", Description: "output archive path"},
+			},
+			Args:      []schemaArg{{Name: "bundle", Required: true}},
+			Stdout:    "json",
+			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeIO, cerr.ExitCodeUsage},
+		},
+		{
+			Name:  "sign",
+			Short: "Post-quantum sign/verify archives with ML-DSA-65 (FIPS 204)",
+			Long:  "Subcommands: 'keygen' generates an ML-DSA-65 key pair. 'sign' signs the archive's SHA-256 hash with the private key. 'verify' checks the signature with the signer's public key and confirms the archive is untampered. Uses ML-DSA-65 (FIPS 204), a NIST post-quantum digital signature standard.",
+			Args: []schemaArg{
+				{Name: "archive", Required: true},
+				{Name: "action", Required: true},
+			},
+			Flags: []schemaFlag{
+				{Name: "priv", Type: "string", Default: "", Description: "hex-encoded ML-DSA-65 private key seed (for sign)"},
+				{Name: "pub", Type: "string", Default: "", Description: "hex-encoded ML-DSA-65 public key (for verify)"},
+				{Name: "sig", Type: "string", Default: "", Description: "path to signature JSON file (for verify)"},
+			},
+			Stdout:    "json",
+			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeValidation, cerr.ExitCodeInternal, cerr.ExitCodeIO, cerr.ExitCodeUsage},
+		},
+		{
+			Name:      "version",
+			Short:     "Print version",
+			Stdout:    "json",
 			ExitCodes: []int{cerr.ExitCodeOK},
 		},
 	}
