@@ -176,7 +176,7 @@ The format is intentionally minimal: no schema registry, no central authority, n
 
 ## Project status
 
-Early development. The CLI surface is functional with 52 tests:
+Early development. The CLI surface is functional with 73 tests:
 
 - `schema`, `init`, `validate`, `lint`, `index`, `list`, `show`, `search`, `backlinks`, `graph`, `export`, `sign`, `version`
 
