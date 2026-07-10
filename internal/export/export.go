@@ -1,11 +1,12 @@
 // Package export bundles an entire OKF knowledge bundle into a single
 // self-contained archive file. The archive is a deterministic tar of every
 // file inside the bundle root (sorted by path), so the same bundle always
-// produces the same byte-identical archive — which is essential for signing.
+// produces the same byte-identical archive, which is essential for signing.
 package export
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
@@ -21,13 +22,13 @@ import (
 
 // Manifest describes the contents of an exported archive.
 type Manifest struct {
-	Bundle   string         `json:"bundle"`           // absolute path to the bundle root
-	Files    []ManifestFile `json:"files"`            // every file in the archive
-	FileCount int           `json:"file_count"`       // total files
-	TotalBytes int64        `json:"total_bytes"`       // sum of file sizes
-	SHA256   string         `json:"sha256"`            // hex digest of the archive bytes
-	Archive  string         `json:"archive"`           // path to the .okf file
-	Created  string         `json:"created"`           // RFC 3339 timestamp
+	Bundle     string         `json:"bundle"`      // absolute path to the bundle root
+	Files      []ManifestFile `json:"files"`       // every file in the archive
+	FileCount  int            `json:"file_count"`  // total files
+	TotalBytes int64          `json:"total_bytes"` // sum of file sizes
+	SHA256     string         `json:"sha256"`      // hex digest of the archive bytes
+	Archive    string         `json:"archive"`     // path to the .okf file
+	Created    string         `json:"created"`     // RFC 3339 timestamp
 }
 
 // ManifestFile is a single entry in the manifest.
@@ -59,7 +60,7 @@ func Archive(root, outPath string) (*Manifest, error) {
 	}
 
 	// Write the archive to a buffer first so we can compute the SHA-256.
-	var buf strings.Builder
+	var buf bytes.Buffer
 	h := sha256.New()
 	mw := io.MultiWriter(&buf, h)
 
@@ -71,28 +72,24 @@ func Archive(root, outPath string) (*Manifest, error) {
 
 	for _, relPath := range files {
 		absPath := filepath.Join(absRoot, relPath)
-		fi, err := os.Stat(absPath)
-		if err != nil {
-			return nil, fmt.Errorf("stat %s: %w", relPath, err)
-		}
-
 		data, err := os.ReadFile(absPath)
 		if err != nil {
 			return nil, fmt.Errorf("read %s: %w", relPath, err)
 		}
+		size := int64(len(data))
 
 		fileHash := sha256.Sum256(data)
 		manifestFiles = append(manifestFiles, ManifestFile{
 			Path:   filepath.ToSlash(relPath),
-			Size:   fi.Size(),
+			Size:   size,
 			SHA256: hex.EncodeToString(fileHash[:]),
 		})
-		totalBytes += fi.Size()
+		totalBytes += size
 
 		hdr := &tar.Header{
 			Name:    filepath.ToSlash(relPath),
-			Size:    fi.Size(),
-			Mode:    int64(fi.Mode()),
+			Size:    size,
+			Mode:    0o644,       // fixed mode for cross-machine reproducibility
 			ModTime: time.Time{}, // zero time for determinism
 		}
 		if err := tw.WriteHeader(hdr); err != nil {
@@ -110,11 +107,10 @@ func Archive(root, outPath string) (*Manifest, error) {
 		return nil, fmt.Errorf("close gzip writer: %w", err)
 	}
 
-	archiveBytes := []byte(buf.String())
 	archiveHash := h.Sum(nil)
 
 	// Write to output file.
-	if err := os.WriteFile(outPath, archiveBytes, 0o644); err != nil {
+	if err := os.WriteFile(outPath, buf.Bytes(), 0o644); err != nil {
 		return nil, fmt.Errorf("write archive %s: %w", outPath, err)
 	}
 
@@ -138,7 +134,7 @@ func collectFiles(root string) ([]string, error) {
 			return err
 		}
 		if d.IsDir() {
-			if d.Name() != filepath.Base(root) && strings.HasPrefix(d.Name(), ".") {
+			if path != root && strings.HasPrefix(d.Name(), ".") {
 				return filepath.SkipDir
 			}
 			return nil

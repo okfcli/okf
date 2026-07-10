@@ -1,20 +1,20 @@
 # okf
 
-A Go CLI toolkit for the [Open Knowledge Format (OKF)](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) — a vendor-neutral format for representing data catalog knowledge as plain markdown files with YAML frontmatter.
+A Go CLI toolkit for the [Open Knowledge Format (OKF)](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md), a vendor-neutral format for representing data catalog knowledge as plain markdown files with YAML frontmatter.
 
 `okf` creates, validates, lints, indexes, searches, and inspects OKF knowledge bundles. One static binary, no runtime dependencies, fast enough to validate millions of concepts.
 
 ## Why okf?
 
-Google's reference OKF implementation is Python + Gemini + BigQuery — vendor-locked to Google's cloud. `okf` is the vendor-neutral alternative: a single Go binary that works anywhere, speaks JSON natively, and is designed to be driven by any AI agent on any provider.
+Google's reference OKF implementation is Python + Gemini + BigQuery, vendor-locked to Google's cloud. `okf` is the vendor-neutral alternative: a single Go binary that works anywhere, speaks JSON natively, and is designed to be driven by any AI agent on any provider.
 
 **Agentic-first** means an AI agent can discover, understand, and drive the entire CLI without reading documentation or scraping text output. Three mechanisms make this work:
 
-1. **`okf schema`** — emits a complete machine-readable description of every command: name, description, flags, arguments, output format, exit codes. One call and the agent knows the full CLI surface.
+1. **`okf schema`** emits a complete machine-readable description of every command: name, description, flags, arguments, output format, exit codes. One call and the agent knows the full CLI surface.
 
-2. **JSON by default** — every command outputs structured JSON on stdout. No `--json` flag, no screen-scraping. Diagnostics go to stderr.
+2. **JSON by default**: every command outputs structured JSON on stdout. No `--json` flag, no screen-scraping. Diagnostics go to stderr.
 
-3. **Structured error envelopes** — all errors emit `{"error": {"kind":..., "code":..., "reason":..., "message":...}}` on stdout with a stable exit code. An agent can branch on the `kind` field to decide what to do next.
+3. **Structured error envelopes**: all errors emit `{"error": {"kind":..., "code":..., "reason":..., "message":...}}` on stdout with a stable exit code. An agent can branch on the `kind` field to decide what to do next.
 
 ## Quick start
 
@@ -37,7 +37,7 @@ okf graph ./my-bundle
 
 ### 1. AI-driven documentation pipeline
 
-An AI agent creates a bundle, writes concept documents from a database schema or API spec, validates them, and generates navigation — all autonomously.
+An AI agent creates a bundle, writes concept documents from a database schema or API spec, validates them, and generates navigation, all autonomously.
 
 ```bash
 okf init ./bundles/mydb                              # start from scratch
@@ -118,9 +118,9 @@ Progressive disclosure (index.md) lets the agent navigate level by level instead
 | `okf backlinks <bundle> <concept-id>` | List concepts that link to a given concept |
 | `okf graph <bundle>` | Print cross-link graph with nodes, edges, and stats |
 | `okf export <bundle> [-o file]` | Export entire bundle as a deterministic .okf tar.gz archive |
-| `okf sign <archive> keygen` | Generate an ML-KEM-768 post-quantum key pair |
-| `okf sign <archive> sign --pub <key>` | Post-quantum seal archive hash via HPKE (ML-KEM-768) |
-| `okf sign <archive> verify --priv <key> --sig <file>` | Verify archive integrity with post-quantum HPKE |
+| `okf sign <archive> keygen` | Generate an ML-DSA-65 post-quantum key pair |
+| `okf sign <archive> sign --priv <key>` | Sign the archive with ML-DSA-65 (FIPS 204) |
+| `okf sign <archive> verify --pub <key> --sig <file>` | Verify the archive signature with the signer's public key |
 | `okf version` | Print version |
 
 ## Exit codes
@@ -135,7 +135,7 @@ Progressive disclosure (index.md) lets the agent navigate level by level instead
 
 ## What is OKF?
 
-OKF is an open format from Google for representing knowledge — the metadata, context, and curated insight that surrounds data and systems. A bundle is a directory of markdown files with YAML frontmatter:
+OKF is an open format from Google for representing knowledge: the metadata, context, and curated insight that surrounds data and systems. A bundle is a directory of markdown files with YAML frontmatter:
 
 ```
 my-bundle/
@@ -176,23 +176,23 @@ The format is intentionally minimal: no schema registry, no central authority, n
 
 ## Project status
 
-Early development. The CLI surface is functional with 44 tests:
+Early development. The CLI surface is functional with 52 tests:
 
 - `schema`, `init`, `validate`, `lint`, `index`, `list`, `show`, `search`, `backlinks`, `graph`, `export`, `sign`, `version`
 
 Planned:
 
-- `okf serve` — local HTTP server to browse a bundle interactively
-- `okf render` — export a bundle as a self-contained HTML file
-- `okf-go` — Go library package for embedding in applications
+- `okf serve`: local HTTP server to browse a bundle interactively
+- `okf render`: export a bundle as a self-contained HTML file
+- `okf-go`: Go library package for embedding in applications
 
 ## Export & Post-Quantum Signing
 
 ### Export
 
 Export your entire bundle into a single deterministic `.okf` archive (tar.gz).
-The archive is byte-reproducible — the same bundle always produces the same
-archive — which is essential for signing and verification.
+The archive is byte-reproducible: the same bundle contents always produce the
+same archive bytes, which is essential for signing and verification.
 
 ```bash
 okf export ./my-bundle -o bundle.okf
@@ -203,28 +203,31 @@ and the archive hash.
 
 ### Post-Quantum Signing
 
-Sign archives with **ML-KEM-768** (FIPS 203, formerly Kyber) via **HPKE**
-(RFC 9180). This uses only the Go standard library (`crypto/hpke` +
-`crypto/mlkem`) — no external dependencies.
+Sign archives with **ML-DSA-65** (FIPS 204, formerly CRYSTALS-Dilithium), a
+NIST post-quantum digital signature standard, via
+[cloudflare/circl](https://github.com/cloudflare/circl).
 
-The signer seals the archive's SHA-256 hash with HPKE using the public key.
-The verifier opens the ciphertext with the private key and confirms the hash
-matches. If the archive has been tampered with, the hash mismatch is detected.
+The signer signs the archive's SHA-256 hash with the private key. Anyone with
+the signer's public key can verify that the archive was signed by the key
+holder and has not been modified since. The private key is stored as a 32-byte
+seed; keep it secret and distribute only the public key.
 
 ```bash
-# 1. Generate an ML-KEM-768 key pair
+# 1. Generate an ML-DSA-65 key pair
 okf sign bundle.okf keygen
 
-# 2. Sign the archive (seals the hash with HPKE)
-okf sign bundle.okf sign --pub <public-key-hex> -o sig.json
+# 2. Sign the archive with your private key
+okf sign bundle.okf sign --priv <private-key-hex> -o sig.json
 
-# 3. Verify the archive (opens the HPKE ciphertext and checks the hash)
-okf sign bundle.okf verify --priv <private-key-hex> --sig sig.json
+# 3. Anyone verifies with your public key
+okf sign bundle.okf verify --pub <public-key-hex> --sig sig.json
 ```
 
-The signature output includes the algorithm (`ML-KEM-768/HPKE-SHA256`),
-the HPKE ciphertext, and the archive SHA-256.
+The signature output includes the algorithm (`ML-DSA-65`), the hex-encoded
+signature, the archive SHA-256, and the signer's public key. Verification
+always uses the public key you pass on the command line, never the one
+embedded in the signature file.
 
 ## License
 
-Apache 2.0 — matching the upstream [Google knowledge-catalog](https://github.com/GoogleCloudPlatform/knowledge-catalog) repository.
+Apache 2.0, matching the upstream [Google knowledge-catalog](https://github.com/GoogleCloudPlatform/knowledge-catalog) repository.
