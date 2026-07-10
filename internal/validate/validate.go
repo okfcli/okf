@@ -95,19 +95,61 @@ func validateBody(r *Report, c *concept.Concept) {
 // validateLinks checks that all cross-links within the bundle resolve to an
 // existing concept. Both absolute (/path/to/concept.md) and relative links
 // are checked.
+//
+// Relative links (without a leading /) resolve from the concept's own
+// directory: a link [X](organizations/cloaked) in pages/about.md targets
+// pages/organizations/cloaked, not organizations/cloaked. When such a
+// relative link is broken but the same target would resolve as an absolute
+// path, the error message suggests the absolute form (e.g.
+// /organizations/cloaked) so authors can fix the link.
 func validateLinks(r *Report, b *bundle.Bundle) {
 	for _, c := range b.Concepts {
-		links := extractLinks(c.Body)
+		// Validate both body links and frontmatter links, mirroring how graph
+		// and backlinks consume them, so a frontmatter link to a nonexistent
+		// concept is reported instead of being silently dropped.
+		bodyLinks := extractLinks(c.Body)
+		fmLinks := ExtractFrontmatterLinks(c.Frontmatter.Links)
+		links := make([]Link, 0, len(bodyLinks)+len(fmLinks))
+		links = append(links, bodyLinks...)
+		links = append(links, fmLinks...)
 		for _, link := range links {
 			target := resolveLink(c.ID, link)
 			if target == "" {
 				continue // external URL or non-concept link, skip
 			}
 			if !b.HasConcept(target) {
-				r.add(c.ID, SeverityError, fmt.Sprintf("broken link: [%s] -> %s (concept %s not found)", link.Text, link.Target, target))
+				// The link didn't resolve as written. Check whether the same
+				// target would resolve as an absolute (bundle-root-relative)
+				// path; if so, the author likely intended an absolute link.
+				// resolveLink with an empty fromConceptID yields the bundle-root
+				// interpretation. This only differs from the as-written result
+				// for relative links (a leading-/ target resolves identically
+				// regardless of fromConceptID), so an already-absolute broken
+				// link correctly falls through to the plain message below.
+				if absTarget := resolveLink("", link); absTarget != "" && absTarget != target && b.HasConcept(absTarget) {
+					r.add(c.ID, SeverityError, fmt.Sprintf(
+						"broken link: [%s] -> %s (relative links resolve from the current concept's directory; use /%s%s for an absolute path)",
+						link.Text, link.Target, absTarget, fragmentOf(link.Target)))
+				} else {
+					r.add(c.ID, SeverityError, fmt.Sprintf(
+						"broken link: [%s] -> %s (concept %s not found)",
+						link.Text, link.Target, target))
+				}
 			}
 		}
 	}
+}
+
+// fragmentOf returns the #fragment portion of a raw link target (including the
+// leading #), or "" if there is none. Fragments are ignored for concept
+// resolution, but preserving them in a suggested path keeps the hint faithful
+// to what the author wrote (e.g. organizations/cloaked#section suggests
+// /organizations/cloaked#section).
+func fragmentOf(raw string) string {
+	if idx := strings.IndexByte(raw, '#'); idx != -1 {
+		return raw[idx:]
+	}
+	return ""
 }
 
 // Link represents a markdown link found in a concept body.
@@ -117,8 +159,33 @@ type Link struct {
 }
 
 // ExtractLinks parses all markdown links [text](target) from a body.
+//
+// Link targets may be absolute or relative. Absolute targets begin with /
+// and resolve against the bundle root (e.g. /tables/users.md -> the
+// concept tables/users regardless of where the linking concept lives).
+// Relative targets lack a leading / and resolve against the linking
+// concept's own directory: a target organizations/cloaked in a concept at
+// pages/about resolves to pages/organizations/cloaked, not
+// organizations/cloaked. External URLs (http://, https://, mailto:, and
+// pure-fragment links like #section) are returned as links but are ignored
+// by concept resolution.
 func ExtractLinks(body string) []Link {
 	return extractLinks(body)
+}
+
+// ExtractFrontmatterLinks converts a frontmatter "links:" list (concept IDs or
+// absolute /paths) into Link structs. Empty strings are skipped. The Text is
+// empty (frontmatter links have no link text); the Target is preserved as-is,
+// including any leading "/" — ResolveLink handles the stripping.
+func ExtractFrontmatterLinks(links []string) []Link {
+	out := make([]Link, 0, len(links))
+	for _, l := range links {
+		if strings.TrimSpace(l) == "" {
+			continue
+		}
+		out = append(out, Link{Text: "", Target: l})
+	}
+	return out
 }
 
 // extractLinks parses all markdown links [text](target) from a body.

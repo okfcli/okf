@@ -45,11 +45,17 @@ func Build(b *bundle.Bundle) *Graph {
 
 	edgeSet := make(map[string]bool) // "from\x00to" dedup
 	for _, c := range b.Concepts {
-		links := validate.ExtractLinks(c.Body)
+		// Collect body links and frontmatter links, then process them
+		// uniformly. The edgeSet dedup handles overlaps.
+		bodyLinks := validate.ExtractLinks(c.Body)
+		fmLinks := validate.ExtractFrontmatterLinks(c.Frontmatter.Links)
+		links := make([]validate.Link, 0, len(bodyLinks)+len(fmLinks))
+		links = append(links, bodyLinks...)
+		links = append(links, fmLinks...)
 		for _, link := range links {
 			target := resolveLink(c.ID, link)
-			if target == "" || !b.HasConcept(target) {
-				continue
+			if target == "" || target == c.ID || !b.HasConcept(target) {
+				continue // skip external, unresolved, self, and dangling links
 			}
 			key := c.ID + "\x00" + target
 			if !edgeSet[key] {
@@ -117,11 +123,11 @@ func resolveLink(fromConceptID string, link validate.Link) string {
 func (g *Graph) Summary() string {
 	s := g.Stats()
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("nodes: %d  edges: %d  isolated: %d  max-backlinks: %d\n",
-		s.NodeCount, s.EdgeCount, s.IsolatedNodes, s.MaxBacklinks))
+	fmt.Fprintf(&sb, "nodes: %d  edges: %d  isolated: %d  max-backlinks: %d\n",
+		s.NodeCount, s.EdgeCount, s.IsolatedNodes, s.MaxBacklinks)
 	if s.NodeCount > 0 && s.EdgeCount > 0 {
 		density := float64(s.EdgeCount) / float64(s.NodeCount*(s.NodeCount-1)) * 100
-		sb.WriteString(fmt.Sprintf("graph density: %.2f%%\n", density))
+		fmt.Fprintf(&sb, "graph density: %.2f%%\n", density)
 	}
 	return sb.String()
 }

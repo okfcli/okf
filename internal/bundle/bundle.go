@@ -62,11 +62,15 @@ func Load(root string) (*Bundle, error) {
 		relPath = filepath.ToSlash(relPath)
 
 		// Reserved filenames are loaded separately; they may lack frontmatter.
+		// ParseReserved reads the file once and tolerates a missing frontmatter
+		// block (e.g. generated index.md), but still surfaces malformed
+		// frontmatter and other errors rather than silently dropping the file.
 		if concept.ReservedNames[strings.ToLower(d.Name())] {
-			c, perr := concept.Parse(path, relPath)
-			if perr == nil {
-				b.Reserved = append(b.Reserved, c)
+			c, perr := concept.ParseReserved(path, relPath)
+			if perr != nil {
+				return fmt.Errorf("parse reserved %s: %w", relPath, perr)
 			}
+			b.Reserved = append(b.Reserved, c)
 			return nil
 		}
 
