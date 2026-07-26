@@ -14,10 +14,10 @@ import (
 
 // Bundle is a loaded OKF knowledge bundle.
 type Bundle struct {
-	Root      string                 // absolute path to the bundle root
-	Concepts  []*concept.Concept     // all concept documents, sorted by ID
+	Root        string             // absolute path to the bundle root
+	Concepts    []*concept.Concept // all concept documents, sorted by ID
 	conceptByID map[string]*concept.Concept
-	Reserved  []*concept.Concept     // index.md / log.md files (parsed if present)
+	Reserved    []*concept.Concept // index.md / log.md files (parsed if present)
 }
 
 // Load walks a bundle directory and parses every .md file.

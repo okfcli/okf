@@ -15,8 +15,8 @@ import (
 
 // Graph is the directed cross-link graph of a bundle.
 type Graph struct {
-	Nodes     []Node
-	Edges     []Edge
+	Nodes []Node
+	Edges []Edge
 	// Backlinks maps concept ID -> list of concept IDs that link to it.
 	Backlinks map[string][]string
 }
@@ -49,11 +49,21 @@ func Build(b *bundle.Bundle) *Graph {
 		// uniformly. The edgeSet dedup handles overlaps.
 		bodyLinks := validate.ExtractLinks(c.Body)
 		fmLinks := validate.ExtractFrontmatterLinks(c.Frontmatter.Links)
-		links := make([]validate.Link, 0, len(bodyLinks)+len(fmLinks))
+		pathRefs := pathValuedRefs(c)
+		links := make([]validate.Link, 0, len(bodyLinks)+len(fmLinks)+len(pathRefs))
 		links = append(links, bodyLinks...)
 		links = append(links, fmLinks...)
+		links = append(links, pathRefs...)
 		for _, link := range links {
 			target := resolveLink(c.ID, link)
+			if target != "" && !b.HasConcept(target) {
+				// Bare root-relative fallback: contract paths in the wild (and
+				// in the spec's §10.2 example) omit the leading slash. The
+				// bundle-root interpretation only differs for relative links.
+				if rootTarget := resolveLink("", link); rootTarget != "" && b.HasConcept(rootTarget) {
+					target = rootTarget
+				}
+			}
 			if target == "" || target == c.ID || !b.HasConcept(target) {
 				continue // skip external, unresolved, self, and dangling links
 			}
@@ -78,10 +88,10 @@ func Build(b *bundle.Bundle) *Graph {
 
 // Stats returns summary statistics about the graph.
 type Stats struct {
-	NodeCount    int
-	EdgeCount    int
-	IsolatedNodes int  // nodes with no inbound or outbound edges
-	MaxBacklinks int  // highest number of backlinks on any single concept
+	NodeCount     int
+	EdgeCount     int
+	IsolatedNodes int // nodes with no inbound or outbound edges
+	MaxBacklinks  int // highest number of backlinks on any single concept
 }
 
 // Stats computes summary statistics.
@@ -119,6 +129,32 @@ func resolveLink(fromConceptID string, link validate.Link) string {
 	return validate.ResolveLink(fromConceptID, link)
 }
 
+// pathValuedRefs collects the path-valued frontmatter fields of OKF §6.2 that
+// can reference other concepts: sources[].resource (a derivation edge per
+// §5.1), computation, executor.resource, and attester.resource. Values that
+// are not concept paths (external URLs, scope descriptors, non-.md files)
+// simply fail to resolve downstream and produce no edge.
+func pathValuedRefs(c *concept.Concept) []validate.Link {
+	fm := c.Frontmatter
+	var refs []validate.Link
+	add := func(target string) {
+		if strings.TrimSpace(target) != "" {
+			refs = append(refs, validate.Link{Target: target})
+		}
+	}
+	for _, s := range fm.Sources {
+		add(s.Resource)
+	}
+	add(fm.Computation)
+	if fm.Executor != nil {
+		add(fm.Executor.Resource)
+	}
+	if fm.Attester != nil {
+		add(fm.Attester.Resource)
+	}
+	return refs
+}
+
 // Summary returns a human-readable summary string.
 func (g *Graph) Summary() string {
 	s := g.Stats()
@@ -131,6 +167,3 @@ func (g *Graph) Summary() string {
 	}
 	return sb.String()
 }
-
-// silence unused import warning for concept (used transitively via bundle).
-var _ = concept.ConceptID

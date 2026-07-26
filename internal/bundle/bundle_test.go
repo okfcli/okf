@@ -21,8 +21,8 @@ func TestLoad_ValidBundle(t *testing.T) {
 	}
 	// Check concept IDs are derived correctly.
 	wantIDs := map[string]bool{
-		"datasets/ga4":       false,
-		"tables/events_":     false,
+		"datasets/ga4":        false,
+		"tables/events_":      false,
 		"playbooks/freshness": false,
 	}
 	for _, c := range b.Concepts {
