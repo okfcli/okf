@@ -52,8 +52,10 @@ func Validate(b *bundle.Bundle) *Report {
 	for _, c := range b.Concepts {
 		validateFrontmatter(r, c)
 		validateBody(r, c)
+		validateV02(r, b, c)
 	}
 	validateLinks(r, b)
+	validateReserved(r, b)
 	return r
 }
 
@@ -80,7 +82,7 @@ func validateFrontmatter(r *Report, c *concept.Concept) {
 	// timestamp, if present, should be a valid ISO 8601 datetime.
 	// yaml.v3 already parses it into time.Time; a zero value with a non-empty
 	// raw would indicate a parse issue, but we accept zero as "not set".
-	if !fm.Timestamp.IsZero() && fm.Timestamp.After(time.Now().Add(24 * 365 * time.Hour)) {
+	if !fm.Timestamp.IsZero() && fm.Timestamp.After(time.Now().Add(24*365*time.Hour)) {
 		r.add(c.ID, SeverityWarning, "frontmatter: 'timestamp' is more than a year in the future")
 	}
 }
@@ -88,7 +90,7 @@ func validateFrontmatter(r *Report, c *concept.Concept) {
 // validateBody checks the markdown body for structural issues.
 func validateBody(r *Report, c *concept.Concept) {
 	if strings.TrimSpace(c.Body) == "" {
-		r.add(c.ID, SeverityWarning, "body is empty — structural markdown is recommended (OKF §4.2)")
+		r.add(c.ID, SeverityWarning, "body is empty - structural markdown is recommended (OKF §4.2)")
 	}
 }
 
@@ -176,7 +178,7 @@ func ExtractLinks(body string) []Link {
 // ExtractFrontmatterLinks converts a frontmatter "links:" list (concept IDs or
 // absolute /paths) into Link structs. Empty strings are skipped. The Text is
 // empty (frontmatter links have no link text); the Target is preserved as-is,
-// including any leading "/" — ResolveLink handles the stripping.
+// including any leading "/" - ResolveLink handles the stripping.
 func ExtractFrontmatterLinks(links []string) []Link {
 	out := make([]Link, 0, len(links))
 	for _, l := range links {

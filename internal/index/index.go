@@ -1,6 +1,6 @@
 // Package index generates index.md files for OKF bundle directories.
 // Per OKF spec §6, index.md provides a directory listing for progressive
-// disclosure — agents and humans navigate one level at a time.
+// disclosure - agents and humans navigate one level at a time.
 package index
 
 import (
@@ -77,9 +77,18 @@ func generateForDir(root, dir string) error {
 	sort.Strings(subdirs)
 
 	var sb strings.Builder
-	sb.WriteString("# Index\n\n")
 	relDir, _ := filepath.Rel(root, dir)
 	relDir = filepath.ToSlash(relDir)
+	// A bundle-root index.md may declare okf_version in a frontmatter block -
+	// the only frontmatter an index file is permitted to carry (OKF §8, §12).
+	// Regeneration preserves an existing declaration; it never adds one, since
+	// the bundle may deliberately target an older revision.
+	if relDir == "." {
+		if ver := rootOKFVersion(filepath.Join(dir, "index.md")); ver != "" {
+			fmt.Fprintf(&sb, "---\nokf_version: %q\n---\n\n", ver)
+		}
+	}
+	sb.WriteString("# Index\n\n")
 	if relDir == "." {
 		sb.WriteString("Bundle root.\n\n")
 	} else {
@@ -110,6 +119,19 @@ func generateForDir(root, dir string) error {
 
 	indexPath := filepath.Join(dir, "index.md")
 	return os.WriteFile(indexPath, []byte(sb.String()), 0644)
+}
+
+// rootOKFVersion reads an existing root index.md and returns its declared
+// okf_version, or "" when the file or declaration is absent.
+func rootOKFVersion(path string) string {
+	c, err := concept.ParseReserved(path, "index.md")
+	if err != nil {
+		return ""
+	}
+	if v, ok := c.Frontmatter.Extensions["okf_version"]; ok {
+		return fmt.Sprintf("%v", v)
+	}
+	return ""
 }
 
 type conceptInfo struct {

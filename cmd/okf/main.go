@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/okfcli/okf/internal/backlinks"
 	"github.com/okfcli/okf/internal/bundle"
@@ -71,7 +72,7 @@ func main() {
 	}
 }
 
-const usage = `okf — Open Knowledge Format toolkit (v%s)
+const usage = `okf - Open Knowledge Format toolkit (v%s)
 
 Usage:
   okf <command> <bundle-path>
@@ -257,9 +258,11 @@ func runList(args []string) {
 	concepts := make([]map[string]string, 0, len(b.Concepts))
 	for _, c := range b.Concepts {
 		concepts = append(concepts, map[string]string{
-			"id":    c.ID,
-			"type":  c.Frontmatter.Type,
-			"title": c.Frontmatter.Title,
+			"id":         c.ID,
+			"type":       c.Frontmatter.Type,
+			"title":      c.Frontmatter.Title,
+			"status":     c.Frontmatter.EffectiveStatus(),
+			"trust_tier": c.Frontmatter.TrustTier(),
 		})
 	}
 
@@ -288,19 +291,89 @@ func runShow(args []string) {
 		tags = c.Frontmatter.Tags
 	}
 
+	fm := c.Frontmatter
+	out := map[string]any{
+		"id":          c.ID,
+		"path":        c.Path,
+		"type":        fm.Type,
+		"title":       fm.Title,
+		"description": fm.Description,
+		"resource":    fm.Resource,
+		"tags":        tags,
+		"body":        c.Body,
+		// Trust and lifecycle (OKF v0.2 §5): always present so agents can
+		// branch on them without probing for key existence.
+		"status":     fm.EffectiveStatus(),
+		"trust_tier": fm.TrustTier(),
+		"stale":      fm.IsStale(time.Now()),
+	}
+	if fm.Generated != nil {
+		out["generated"] = map[string]any{"by": fm.Generated.By, "at": fm.Generated.At}
+	}
+	if len(fm.Verified) > 0 {
+		verified := make([]map[string]any, 0, len(fm.Verified))
+		for _, v := range fm.Verified {
+			verified = append(verified, map[string]any{"by": v.By, "at": v.At})
+		}
+		out["verified"] = verified
+	}
+	if fm.StaleAfter != "" {
+		out["stale_after"] = fm.StaleAfter
+	}
+	if len(fm.Sources) > 0 {
+		sources := make([]map[string]any, 0, len(fm.Sources))
+		for _, s := range fm.Sources {
+			src := map[string]any{"resource": s.Resource}
+			if s.ID != "" {
+				src["id"] = s.ID
+			}
+			if s.Title != "" {
+				src["title"] = s.Title
+			}
+			if s.Author != "" {
+				src["author"] = s.Author
+			}
+			if s.UsageCount != nil {
+				src["usage_count"] = *s.UsageCount
+			}
+			if s.LastModified != "" {
+				src["last_modified"] = s.LastModified
+			}
+			if s.UsageWindow != nil {
+				src["usage_window"] = map[string]string{"from": s.UsageWindow.From, "to": s.UsageWindow.To}
+			}
+			sources = append(sources, src)
+		}
+		out["sources"] = sources
+	}
+	if fm.UsageWindow != nil {
+		out["usage_window"] = map[string]string{"from": fm.UsageWindow.From, "to": fm.UsageWindow.To}
+	}
+	// Attested Computation contract (OKF v0.2 §10).
+	if fm.Runtime != "" {
+		out["runtime"] = fm.Runtime
+	}
+	if len(fm.Parameters) > 0 {
+		params := make([]map[string]any, 0, len(fm.Parameters))
+		for _, p := range fm.Parameters {
+			params = append(params, map[string]any{"name": p.Name, "type": p.Type, "required": p.Required})
+		}
+		out["parameters"] = params
+	}
+	if fm.Computation != "" {
+		out["computation"] = fm.Computation
+	}
+	if fm.Executor != nil {
+		out["executor"] = map[string]any{"resource": fm.Executor.Resource, "receipt": fm.Executor.Receipt}
+	}
+	if fm.Attester != nil {
+		out["attester"] = map[string]any{"resource": fm.Attester.Resource}
+	}
+
 	outputJSON(map[string]any{
 		"command": "show",
 		"bundle":  b.Root,
-		"concept": map[string]any{
-			"id":          c.ID,
-			"path":        c.Path,
-			"type":        c.Frontmatter.Type,
-			"title":       c.Frontmatter.Title,
-			"description": c.Frontmatter.Description,
-			"resource":    c.Frontmatter.Resource,
-			"tags":        tags,
-			"body":        c.Body,
-		},
+		"concept": out,
 	})
 }
 
@@ -355,11 +428,11 @@ func runSearch(args []string) {
 	}
 
 	outputJSON(map[string]any{
-		"command":  "search",
-		"bundle":   b.Root,
-		"filters":  f,
-		"results":  concepts,
-		"count":    len(results),
+		"command": "search",
+		"bundle":  b.Root,
+		"filters": f,
+		"results": concepts,
+		"count":   len(results),
 	})
 }
 
@@ -441,10 +514,10 @@ type schemaCommand struct {
 
 // schemaRoot is the top-level schema output.
 type schemaRoot struct {
-	Name        string          `json:"name"`
-	Version     string          `json:"version"`
-	Description string          `json:"description"`
-	Commands    []schemaCommand `json:"commands"`
+	Name        string             `json:"name"`
+	Version     string             `json:"version"`
+	Description string             `json:"description"`
+	Commands    []schemaCommand    `json:"commands"`
 	ExitCodes   []cerr.ExitCodeDoc `json:"exit_codes"`
 }
 
@@ -474,68 +547,68 @@ func buildSchemaRoot() schemaRoot {
 func allSchemaCommands() []schemaCommand {
 	return []schemaCommand{
 		{
-			Name:   "schema",
-			Short:  "Print machine-readable CLI metadata as JSON",
-			Long:   "Outputs a JSON document describing every command, its flags, arguments, output format, and exit codes. Pass a command name to describe just that command.",
-			Args:   []schemaArg{{Name: "command", Required: false}},
-			Stdout: "json",
+			Name:      "schema",
+			Short:     "Print machine-readable CLI metadata as JSON",
+			Long:      "Outputs a JSON document describing every command, its flags, arguments, output format, and exit codes. Pass a command name to describe just that command.",
+			Args:      []schemaArg{{Name: "command", Required: false}},
+			Stdout:    "json",
 			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeUsage},
 		},
 		{
-			Name:   "init",
-			Short:  "Create a new empty OKF bundle",
-			Long:   "Creates a bundle directory with standard subdirectories (tables, datasets, playbooks), a root index.md, and a .gitignore. Fails if the directory already exists.",
-			Args:   []schemaArg{{Name: "bundle", Required: true}},
-			Stdout: "json",
+			Name:      "init",
+			Short:     "Create a new empty OKF bundle",
+			Long:      "Creates a bundle directory with standard subdirectories (tables, datasets, playbooks), a root index.md, and a .gitignore. Fails if the directory already exists.",
+			Args:      []schemaArg{{Name: "bundle", Required: true}},
+			Stdout:    "json",
 			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeIO, cerr.ExitCodeUsage},
 		},
 		{
-			Name:   "validate",
-			Short:  "Validate a bundle against the OKF spec",
-			Long:   "Checks every concept for required frontmatter (type), recommended fields (title, description, tags), non-empty body, and valid cross-links. Exits 1 if any errors are found.",
-			Args:   []schemaArg{{Name: "bundle", Required: true}},
-			Stdout: "json",
+			Name:      "validate",
+			Short:     "Validate a bundle against the OKF spec",
+			Long:      "Checks every concept against OKF v0.2: required frontmatter (type), recommended fields (title, description, tags), non-empty body, valid cross-links, the provenance/trust/lifecycle families (sources, generated, verified, status, stale_after), the Attested Computation contract (runtime, parameters, computation, executor, attester), reserved-file structure (index.md, log.md), and legacy v0.1 constructs (timestamp, # Citations). Exits 1 if any errors are found.",
+			Args:      []schemaArg{{Name: "bundle", Required: true}},
+			Stdout:    "json",
 			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeValidation, cerr.ExitCodeIO, cerr.ExitCodeUsage},
 		},
 		{
-			Name:   "lint",
-			Short:  "Check recommended fields and style (warnings only)",
-			Long:   "Same checks as validate but only emits warnings — errors are suppressed. Exits 0 even with warnings.",
-			Args:   []schemaArg{{Name: "bundle", Required: true}},
-			Stdout: "json",
+			Name:      "lint",
+			Short:     "Check recommended fields and style (warnings only)",
+			Long:      "Same checks as validate but only emits warnings - errors are suppressed. Exits 0 even with warnings.",
+			Args:      []schemaArg{{Name: "bundle", Required: true}},
+			Stdout:    "json",
 			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeIO, cerr.ExitCodeUsage},
 		},
 		{
-			Name:   "index",
-			Short:  "Generate index.md files (progressive disclosure)",
-			Long:   "Writes index.md into every directory containing concept documents, providing progressive disclosure per OKF spec §6.",
-			Args:   []schemaArg{{Name: "bundle", Required: true}},
-			Stdout: "json",
+			Name:      "index",
+			Short:     "Generate index.md files (progressive disclosure)",
+			Long:      "Writes index.md into every directory containing concept documents, providing progressive disclosure per OKF spec §6.",
+			Args:      []schemaArg{{Name: "bundle", Required: true}},
+			Stdout:    "json",
 			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeIO, cerr.ExitCodeUsage},
 		},
 		{
-			Name:   "list",
-			Short:  "List all concepts in the bundle",
-			Long:   "Lists every concept document with its ID, type, and title.",
-			Args:   []schemaArg{{Name: "bundle", Required: true}},
-			Stdout: "json",
+			Name:      "list",
+			Short:     "List all concepts in the bundle",
+			Long:      "Lists every concept document with its ID, type, title, lifecycle status, and trust tier (unverified, machine-confirmed, or human-reviewed).",
+			Args:      []schemaArg{{Name: "bundle", Required: true}},
+			Stdout:    "json",
 			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeIO, cerr.ExitCodeUsage},
 		},
 		{
-			Name:   "show",
-			Short:  "Show a single concept's full content",
-			Long:   "Returns the concept's ID, file path, frontmatter (type, title, description, resource, tags), and markdown body as JSON.",
+			Name:  "show",
+			Short: "Show a single concept's full content",
+			Long:  "Returns the concept's ID, file path, frontmatter (type, title, description, resource, tags), trust and lifecycle state (status, trust_tier, stale, generated, verified, stale_after), provenance (sources, usage_window), the Attested Computation contract when present (runtime, parameters, computation, executor, attester), and markdown body as JSON.",
 			Args: []schemaArg{
 				{Name: "bundle", Required: true},
 				{Name: "concept-id", Required: true},
 			},
-			Stdout: "json",
+			Stdout:    "json",
 			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeValidation, cerr.ExitCodeIO, cerr.ExitCodeUsage},
 		},
 		{
-			Name:   "search",
-			Short:  "Search concepts by tag, type, or text",
-			Long:   "Filters concepts in a bundle by tag (--tag), frontmatter type (--type), or full-text search in title, description, and body (--text). Multiple filters are AND-combined. With no filters, returns all concepts.",
+			Name:  "search",
+			Short: "Search concepts by tag, type, or text",
+			Long:  "Filters concepts in a bundle by tag (--tag), frontmatter type (--type), or full-text search in title, description, and body (--text). Multiple filters are AND-combined. With no filters, returns all concepts.",
 			Flags: []schemaFlag{
 				{Name: "tag", Type: "string", Default: "", Description: "filter by tag (case-insensitive)"},
 				{Name: "type", Type: "string", Default: "", Description: "filter by frontmatter type (case-insensitive)"},
@@ -544,32 +617,32 @@ func allSchemaCommands() []schemaCommand {
 			Args: []schemaArg{
 				{Name: "bundle", Required: true},
 			},
-			Stdout: "json",
+			Stdout:    "json",
 			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeIO, cerr.ExitCodeUsage},
 		},
 		{
-			Name:   "backlinks",
-			Short:  "List concepts that link to a given concept",
-			Long:   "Returns the IDs of all concepts in the bundle that contain a markdown link to the specified concept. Deduplicates multiple links from the same source.",
+			Name:  "backlinks",
+			Short: "List concepts that link to a given concept",
+			Long:  "Returns the IDs of all concepts in the bundle that contain a markdown link to the specified concept. Deduplicates multiple links from the same source.",
 			Args: []schemaArg{
 				{Name: "bundle", Required: true},
 				{Name: "concept-id", Required: true},
 			},
-			Stdout: "json",
+			Stdout:    "json",
 			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeIO, cerr.ExitCodeUsage},
 		},
 		{
-			Name:   "graph",
-			Short:  "Print cross-link graph statistics",
-			Long:   "Builds the directed cross-link graph from concept markdown links and prints nodes, edges, and summary statistics.",
-			Args:   []schemaArg{{Name: "bundle", Required: true}},
-			Stdout: "json",
+			Name:      "graph",
+			Short:     "Print cross-link graph statistics",
+			Long:      "Builds the directed cross-link graph from concept markdown links and prints nodes, edges, and summary statistics.",
+			Args:      []schemaArg{{Name: "bundle", Required: true}},
+			Stdout:    "json",
 			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeIO, cerr.ExitCodeUsage},
 		},
 		{
-			Name:   "version",
-			Short:  "Print version",
-			Stdout: "json",
+			Name:      "version",
+			Short:     "Print version",
+			Stdout:    "json",
 			ExitCodes: []int{cerr.ExitCodeOK},
 		},
 	}

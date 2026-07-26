@@ -31,8 +31,9 @@ func Create(dir string) error {
 		}
 	}
 
-	// Root index.md
-	indexContent := "# Index\n\nBundle root.\n\n## Subdirectories\n\n- [tables/](tables/index.md)\n- [datasets/](datasets/index.md)\n- [playbooks/](playbooks/index.md)\n"
+	// Root index.md. The frontmatter block declares the OKF spec revision the
+	// bundle targets - the only frontmatter an index.md may carry (OKF §8, §12).
+	indexContent := "---\nokf_version: \"0.2\"\n---\n\n# Index\n\nBundle root.\n\n## Subdirectories\n\n- [tables/](tables/index.md)\n- [datasets/](datasets/index.md)\n- [playbooks/](playbooks/index.md)\n"
 	if err := os.WriteFile(filepath.Join(dir, "index.md"), []byte(indexContent), 0644); err != nil {
 		return fmt.Errorf("write index.md: %w", err)
 	}

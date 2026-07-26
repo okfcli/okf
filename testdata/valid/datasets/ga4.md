@@ -16,4 +16,4 @@ See [events_20210101](/tables/events_.md) for the core events table.
 
 # Key Tables
 
-- [events_](/tables/events_.md) — the core events table, one row per event.
+- [events_](/tables/events_.md) - the core events table, one row per event.

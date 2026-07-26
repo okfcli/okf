@@ -28,9 +28,9 @@ func TestSearch_ByTag(t *testing.T) {
 
 func TestSearch_ByType(t *testing.T) {
 	b := testBundle(t, map[string]string{
-		"tables/users.md":     "---\ntype: Table\ntitle: Users\n---\n\nbody",
-		"datasets/ga4.md":     "---\ntype: Dataset\ntitle: GA4\n---\n\nbody",
-		"tables/orders.md":    "---\ntype: Table\ntitle: Orders\n---\n\nbody",
+		"tables/users.md":  "---\ntype: Table\ntitle: Users\n---\n\nbody",
+		"datasets/ga4.md":  "---\ntype: Dataset\ntitle: GA4\n---\n\nbody",
+		"tables/orders.md": "---\ntype: Table\ntitle: Orders\n---\n\nbody",
 	})
 
 	results := Search(b, Filters{Type: "Table"})
@@ -41,8 +41,8 @@ func TestSearch_ByType(t *testing.T) {
 
 func TestSearch_ByText(t *testing.T) {
 	b := testBundle(t, map[string]string{
-		"tables/users.md":   "---\ntype: Table\ntitle: Users\n---\n\n# Users\n\nOne row per authenticated user account.",
-		"tables/orders.md":  "---\ntype: Table\ntitle: Orders\n---\n\n# Orders\n\nOne row per customer order.",
+		"tables/users.md":    "---\ntype: Table\ntitle: Users\n---\n\n# Users\n\nOne row per authenticated user account.",
+		"tables/orders.md":   "---\ntype: Table\ntitle: Orders\n---\n\n# Orders\n\nOne row per customer order.",
 		"tables/products.md": "---\ntype: Table\ntitle: Products\n---\n\n# Products\n\nProduct catalog.",
 	})
 
@@ -69,9 +69,9 @@ func TestSearch_TextMatchesTitleAndDescription(t *testing.T) {
 
 func TestSearch_CombinedFilters(t *testing.T) {
 	b := testBundle(t, map[string]string{
-		"tables/users.md":    "---\ntype: Table\ntitle: Users\ntags: [auth]\n---\n\nuser accounts",
-		"tables/orders.md":   "---\ntype: Table\ntitle: Orders\ntags: [auth]\n---\n\norder data",
-		"datasets/users.md":  "---\ntype: Dataset\ntitle: Users\ntags: [auth]\n---\n\nuser dataset",
+		"tables/users.md":   "---\ntype: Table\ntitle: Users\ntags: [auth]\n---\n\nuser accounts",
+		"tables/orders.md":  "---\ntype: Table\ntitle: Orders\ntags: [auth]\n---\n\norder data",
+		"datasets/users.md": "---\ntype: Dataset\ntitle: Users\ntags: [auth]\n---\n\nuser dataset",
 	})
 
 	results := Search(b, Filters{Type: "Table", Tag: "auth"})

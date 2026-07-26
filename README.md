@@ -1,20 +1,20 @@
 # okf
 
-A Go CLI toolkit for the [Open Knowledge Format (OKF)](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) — a vendor-neutral format for representing data catalog knowledge as plain markdown files with YAML frontmatter.
+A Go CLI toolkit for the [Open Knowledge Format (OKF)](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) - a vendor-neutral format for representing data catalog knowledge as plain markdown files with YAML frontmatter.
 
 `okf` creates, validates, lints, indexes, searches, and inspects OKF knowledge bundles. One static binary, no runtime dependencies, fast enough to validate millions of concepts.
 
 ## Why okf?
 
-Google's reference OKF implementation is Python + Gemini + BigQuery — vendor-locked to Google's cloud. `okf` is the vendor-neutral alternative: a single Go binary that works anywhere, speaks JSON natively, and is designed to be driven by any AI agent on any provider.
+Google's reference OKF implementation is Python + Gemini + BigQuery - vendor-locked to Google's cloud. `okf` is the vendor-neutral alternative: a single Go binary that works anywhere, speaks JSON natively, and is designed to be driven by any AI agent on any provider.
 
 **Agentic-first** means an AI agent can discover, understand, and drive the entire CLI without reading documentation or scraping text output. Three mechanisms make this work:
 
-1. **`okf schema`** — emits a complete machine-readable description of every command: name, description, flags, arguments, output format, exit codes. One call and the agent knows the full CLI surface.
+1. **`okf schema`** - emits a complete machine-readable description of every command: name, description, flags, arguments, output format, exit codes. One call and the agent knows the full CLI surface.
 
-2. **JSON by default** — every command outputs structured JSON on stdout. No `--json` flag, no screen-scraping. Diagnostics go to stderr.
+2. **JSON by default** - every command outputs structured JSON on stdout. No `--json` flag, no screen-scraping. Diagnostics go to stderr.
 
-3. **Structured error envelopes** — all errors emit `{"error": {"kind":..., "code":..., "reason":..., "message":...}}` on stdout with a stable exit code. An agent can branch on the `kind` field to decide what to do next.
+3. **Structured error envelopes** - all errors emit `{"error": {"kind":..., "code":..., "reason":..., "message":...}}` on stdout with a stable exit code. An agent can branch on the `kind` field to decide what to do next.
 
 ## Quick start
 
@@ -37,7 +37,7 @@ okf graph ./my-bundle
 
 ### 1. AI-driven documentation pipeline
 
-An AI agent creates a bundle, writes concept documents from a database schema or API spec, validates them, and generates navigation — all autonomously.
+An AI agent creates a bundle, writes concept documents from a database schema or API spec, validates them, and generates navigation - all autonomously.
 
 ```bash
 okf init ./bundles/mydb                              # start from scratch
@@ -112,7 +112,7 @@ Progressive disclosure (index.md) lets the agent navigate level by level instead
 | `okf validate <bundle>` | Validate a bundle against the OKF spec (exit 1 on errors) |
 | `okf lint <bundle>` | Check recommended fields and style (warnings only) |
 | `okf index <bundle>` | Generate index.md files (progressive disclosure) |
-| `okf list <bundle>` | List all concepts with ID, type, title |
+| `okf list <bundle>` | List all concepts with ID, type, title, status, trust tier |
 | `okf show <bundle> <concept-id>` | Show a single concept's full content as JSON |
 | `okf search <bundle> [--tag] [--type] [--text]` | Search concepts by tag, type, or text |
 | `okf backlinks <bundle> <concept-id>` | List concepts that link to a given concept |
@@ -131,7 +131,7 @@ Progressive disclosure (index.md) lets the agent navigate level by level instead
 
 ## What is OKF?
 
-OKF is an open format from Google for representing knowledge — the metadata, context, and curated insight that surrounds data and systems. A bundle is a directory of markdown files with YAML frontmatter:
+OKF is an open format from Google for representing knowledge - the metadata, context, and curated insight that surrounds data and systems. A bundle is a directory of markdown files with YAML frontmatter:
 
 ```
 my-bundle/
@@ -170,18 +170,34 @@ Joined with [users](/tables/users.md) on user_id.
 
 The format is intentionally minimal: no schema registry, no central authority, no required tooling. If you can `cat` a file, you can read OKF; if you can `git clone` a repo, you can ship it.
 
+## OKF v0.2 support
+
+`okf` implements [OKF v0.2](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md), which makes provenance, trust, lifecycle, and attestation first-class:
+
+- **Provenance (§5.1)** - the `sources` family with per-source credibility signals (`author`, `usage_count`, `last_modified`) and `usage_window`; footnote labels are validated as join keys into `sources[].id` for per-claim attribution.
+- **Trust (§5.2–5.3)** - `generated` and `verified` are parsed (a bare `verified` mapping is treated as a one-element list, as the spec requires) and every concept gets a derived trust tier: `unverified`, `machine-confirmed`, or `human-reviewed`.
+- **Lifecycle (§5.4–5.5)** - `status` (draft/stable/deprecated, default stable) and `stale_after`; `validate` flags stale concepts and invalid values, and `show`/`list` expose the effective state.
+- **Attested Computations (§10)** - the full contract (`runtime`, `parameters`, `computation`, `executor`, `attester`) is parsed and validated: `runtime` is required, the computation must exist inline or as a file, and contract paths that point at missing files are flagged.
+- **Actor convention (§7)** - `generated.by` and `verified[].by` are checked against `human:<id>`, `process:<id>`, and `<producer>/<version>` forms.
+- **Versioning (§12)** - `okf init` declares `okf_version: "0.2"` in the root `index.md`; `okf index` preserves an existing declaration when regenerating.
+- **v0.1 compatibility (§13)** - legacy `timestamp` and `# Citations` are still consumed (with migration warnings), and `generated.at` falls back to `timestamp`.
+
+Graph and backlinks also follow §6.2 path-valued references: `sources[].resource`, `computation`, `executor.resource`, and `attester.resource` that resolve to concepts become derivation edges.
+
+All four reference bundles in the upstream repository (acme_retail, crypto_bitcoin, ga4, stackoverflow) load and validate with zero errors.
+
 ## Project status
 
-Early development. The CLI surface is functional with 35 tests:
+Early development. The CLI surface is functional:
 
 - `schema`, `init`, `validate`, `lint`, `index`, `list`, `show`, `search`, `backlinks`, `graph`, `version`
 
 Planned:
 
-- `okf serve` — local HTTP server to browse a bundle interactively
-- `okf render` — export a bundle as a self-contained HTML file
-- `okf-go` — Go library package for embedding in applications
+- `okf serve` - local HTTP server to browse a bundle interactively
+- `okf render` - export a bundle as a self-contained HTML file
+- `okf-go` - Go library package for embedding in applications
 
 ## License
 
-Apache 2.0 — matching the upstream [Google knowledge-catalog](https://github.com/GoogleCloudPlatform/knowledge-catalog) repository.
+Apache 2.0 - matching the upstream [Google knowledge-catalog](https://github.com/GoogleCloudPlatform/knowledge-catalog) repository.

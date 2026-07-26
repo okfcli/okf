@@ -41,7 +41,7 @@ func TestParse_LinksMissing(t *testing.T) {
 }
 
 func TestParse_LinksMalformedShapeTolerated(t *testing.T) {
-	// A mapping (or otherwise unexpected) shape must not fail the parse — it is
+	// A mapping (or otherwise unexpected) shape must not fail the parse - it is
 	// tolerated as an empty list so one bad concept cannot kill a bundle load.
 	raw := []byte("---\ntype: T\ntitle: A\nlinks:\n  target: /b\n---\n\nbody")
 	c, err := ParseBytes(raw, "a.md", "/tmp/a.md")

@@ -3,6 +3,7 @@ package initbundle
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -68,5 +69,22 @@ func TestCreate_CreatesGitignore(t *testing.T) {
 	gi := filepath.Join(dir, ".gitignore")
 	if _, err := os.Stat(gi); err != nil {
 		t.Fatalf("missing .gitignore: %v", err)
+	}
+}
+
+// §12: a freshly created bundle targets OKF v0.2 via a root index.md
+// frontmatter declaration.
+func TestCreate_RootIndexDeclaresOKFVersion(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "mybundle")
+	if err := Create(dir); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "index.md"))
+	if err != nil {
+		t.Fatalf("read index.md: %v", err)
+	}
+	s := string(got)
+	if !strings.HasPrefix(s, "---\n") || !strings.Contains(s, `okf_version: "0.2"`) {
+		t.Errorf("root index.md should declare okf_version \"0.2\" (OKF §12):\n%s", s)
 	}
 }

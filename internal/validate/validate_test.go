@@ -154,8 +154,8 @@ func TestValidateLinks_RelativeLinkSuggestsAbsolutePath(t *testing.T) {
 	// the absolute target organizations/cloaked exists. The error should
 	// suggest the absolute path.
 	b := testBundle(t, map[string]string{
-		"pages/about.md":             "---\ntype: Page\ntitle: About\n---\n\nSee [Cloaked](organizations/cloaked).",
-		"organizations/cloaked.md":   "---\ntype: Org\ntitle: Cloaked\n---\n\nbody",
+		"pages/about.md":           "---\ntype: Page\ntitle: About\n---\n\nSee [Cloaked](organizations/cloaked).",
+		"organizations/cloaked.md": "---\ntype: Org\ntitle: Cloaked\n---\n\nbody",
 	})
 
 	r := &Report{}
@@ -206,7 +206,7 @@ func TestValidateLinks_NonexistentConceptNoAbsolutePathSuggestion(t *testing.T) 
 
 func TestValidateLinks_AlreadyAbsoluteBrokenNoSuggestion(t *testing.T) {
 	// A link that is already written as an absolute path (/...) but does not
-	// resolve must NOT produce an "absolute path" suggestion — there is
+	// resolve must NOT produce an "absolute path" suggestion - there is
 	// nothing to suggest, so it falls through to the plain broken-link message.
 	b := testBundle(t, map[string]string{
 		"pages/about.md": "---\ntype: Page\ntitle: About\n---\n\nSee [Cloaked](/organizations/cloaked).",
