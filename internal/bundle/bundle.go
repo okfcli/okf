@@ -14,10 +14,11 @@ import (
 
 // Bundle is a loaded OKF knowledge bundle.
 type Bundle struct {
-	Root        string             // absolute path to the bundle root
-	Concepts    []*concept.Concept // all concept documents, sorted by ID
-	conceptByID map[string]*concept.Concept
-	Reserved    []*concept.Concept // index.md / log.md files (parsed if present)
+	Root         string             // absolute path to the bundle root
+	Concepts     []*concept.Concept // all concept documents, sorted by ID
+	conceptByID  map[string]*concept.Concept
+	Reserved     []*concept.Concept // index.md / log.md files (parsed if present)
+	reservedByID map[string]*concept.Concept
 }
 
 // Load walks a bundle directory and parses every .md file.
@@ -36,8 +37,9 @@ func Load(root string) (*Bundle, error) {
 	}
 
 	b := &Bundle{
-		Root:        absRoot,
-		conceptByID: make(map[string]*concept.Concept),
+		Root:         absRoot,
+		conceptByID:  make(map[string]*concept.Concept),
+		reservedByID: make(map[string]*concept.Concept),
 	}
 
 	err = filepath.WalkDir(absRoot, func(path string, d fs.DirEntry, err error) error {
@@ -71,6 +73,7 @@ func Load(root string) (*Bundle, error) {
 				return fmt.Errorf("parse reserved %s: %w", relPath, perr)
 			}
 			b.Reserved = append(b.Reserved, c)
+			b.reservedByID[c.ID] = c
 			return nil
 		}
 
@@ -100,5 +103,12 @@ func (b *Bundle) Get(id string) *concept.Concept {
 // HasConcept reports whether a concept with the given ID exists.
 func (b *Bundle) HasConcept(id string) bool {
 	_, ok := b.conceptByID[id]
+	return ok
+}
+
+// HasReserved reports whether a reserved file (index.md or log.md) with the
+// given ID exists, e.g. "sub/index" for /sub/index.md.
+func (b *Bundle) HasReserved(id string) bool {
+	_, ok := b.reservedByID[id]
 	return ok
 }

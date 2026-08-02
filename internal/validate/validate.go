@@ -95,8 +95,8 @@ func validateBody(r *Report, c *concept.Concept) {
 }
 
 // validateLinks checks that all cross-links within the bundle resolve to an
-// existing concept. Both absolute (/path/to/concept.md) and relative links
-// are checked.
+// existing concept or reserved file (index.md, log.md). Both absolute
+// (/path/to/concept.md) and relative links are checked.
 //
 // Relative links (without a leading /) resolve from the concept's own
 // directory: a link [X](organizations/cloaked) in pages/about.md targets
@@ -119,7 +119,7 @@ func validateLinks(r *Report, b *bundle.Bundle) {
 			if target == "" {
 				continue // external URL or non-concept link, skip
 			}
-			if !b.HasConcept(target) {
+			if !b.HasConcept(target) && !b.HasReserved(target) {
 				// The link didn't resolve as written. Check whether the same
 				// target would resolve as an absolute (bundle-root-relative)
 				// path; if so, the author likely intended an absolute link.
@@ -128,7 +128,7 @@ func validateLinks(r *Report, b *bundle.Bundle) {
 				// for relative links (a leading-/ target resolves identically
 				// regardless of fromConceptID), so an already-absolute broken
 				// link correctly falls through to the plain message below.
-				if absTarget := resolveLink("", link); absTarget != "" && absTarget != target && b.HasConcept(absTarget) {
+				if absTarget := resolveLink("", link); absTarget != "" && absTarget != target && (b.HasConcept(absTarget) || b.HasReserved(absTarget)) {
 					r.add(c.ID, SeverityError, fmt.Sprintf(
 						"broken link: [%s] -> %s (relative links resolve from the current concept's directory; use /%s%s for an absolute path)",
 						link.Text, link.Target, absTarget, fragmentOf(link.Target)))

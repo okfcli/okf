@@ -51,6 +51,32 @@ func TestLoad_HasConcept(t *testing.T) {
 	}
 }
 
+func TestLoad_HasReserved(t *testing.T) {
+	tmp := t.TempDir()
+
+	subDir := filepath.Join(tmp, "sub")
+	if err := os.MkdirAll(subDir, 0o755); err != nil {
+		t.Fatalf("mkdir sub: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(subDir, "index.md"), []byte("# Sub index\n"), 0o644); err != nil {
+		t.Fatalf("write index: %v", err)
+	}
+
+	b, err := Load(tmp)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if !b.HasReserved("sub/index") {
+		t.Error("HasReserved(sub/index) = false, want true")
+	}
+	if b.HasReserved("sub/log") {
+		t.Error("HasReserved(sub/log) = true, want false")
+	}
+	if b.HasReserved("nonexistent") {
+		t.Error("HasReserved(nonexistent) = true, want false")
+	}
+}
+
 func TestLoad_FrontmatterParsed(t *testing.T) {
 	b, err := Load("../../testdata/valid")
 	if err != nil {

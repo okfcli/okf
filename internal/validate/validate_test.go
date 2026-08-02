@@ -257,6 +257,79 @@ func TestValidateLinks_SuggestionPreservesFragment(t *testing.T) {
 	}
 }
 
+func TestValidateLinks_AbsoluteLinkToExistingIndexIsValid(t *testing.T) {
+	// A link to an existing index.md is a valid reference to a reserved
+	// file, not a concept, and must not be reported as broken (issue #17).
+	b := testBundle(t, map[string]string{
+		"a.md":         "---\ntype: T\ntitle: A\n---\n\nSee [Sub](/sub/index.md).",
+		"sub/index.md": "# Sub index\n",
+	})
+
+	r := &Report{}
+	validateLinks(r, b)
+
+	if len(r.Findings) != 0 {
+		t.Fatalf("expected no findings for a link to an existing index.md, got %+v", r.Findings)
+	}
+}
+
+func TestValidateLinks_RelativeLinkToExistingIndexIsValid(t *testing.T) {
+	// Same as above, but via a relative link resolved from the linking
+	// concept's own directory.
+	b := testBundle(t, map[string]string{
+		"sub/about.md": "---\ntype: T\ntitle: About\n---\n\nSee [Home](index.md).",
+		"sub/index.md": "# Sub index\n",
+	})
+
+	r := &Report{}
+	validateLinks(r, b)
+
+	if len(r.Findings) != 0 {
+		t.Fatalf("expected no findings for a relative link to an existing index.md, got %+v", r.Findings)
+	}
+}
+
+func TestValidateLinks_LinkToNonexistentIndexIsBrokenError(t *testing.T) {
+	// A link to an index.md that does not exist anywhere in the bundle
+	// remains a genuine broken link.
+	b := testBundle(t, map[string]string{
+		"a.md": "---\ntype: T\ntitle: A\n---\n\nSee [Sub](/sub/index.md).",
+	})
+
+	r := &Report{}
+	validateLinks(r, b)
+
+	var msg string
+	for _, f := range r.Findings {
+		if f.Severity == SeverityError && strings.Contains(f.Message, "broken link") {
+			msg = f.Message
+			break
+		}
+	}
+	if msg == "" {
+		t.Fatalf("expected a broken-link error for a nonexistent index.md, findings = %+v", r.Findings)
+	}
+	if !strings.Contains(msg, "sub/index") {
+		t.Errorf("error %q does not name the missing target sub/index", msg)
+	}
+}
+
+func TestValidateLinks_LinkToExistingLogIsValid(t *testing.T) {
+	// log.md is reserved the same way as index.md; a link to an existing
+	// one must not be reported as broken.
+	b := testBundle(t, map[string]string{
+		"a.md":   "---\ntype: T\ntitle: A\n---\n\nSee [Log](/log.md).",
+		"log.md": "# Log\n",
+	})
+
+	r := &Report{}
+	validateLinks(r, b)
+
+	if len(r.Findings) != 0 {
+		t.Fatalf("expected no findings for a link to an existing log.md, got %+v", r.Findings)
+	}
+}
+
 // --- helpers ---
 
 func testBundle(t *testing.T, files map[string]string) *bundle.Bundle {
