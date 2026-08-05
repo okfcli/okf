@@ -144,37 +144,85 @@ func mustBundle(args []string) *bundle.Bundle {
 // --- validate / lint ---
 
 func runValidate(args []string, strict bool) {
-	if len(args) == 0 {
+	// Flags may appear before or after the bundle path
+	// (okf validate --format sarif bundle, okf validate bundle --format sarif).
+	bundlePath := ""
+	format := "json"
+	exitZero := false
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--format":
+			if i+1 >= len(args) {
+				exitErr(cerr.Usage("--format requires a value"))
+			}
+			format = args[i+1]
+			i++
+		case "--exit-zero":
+			// lint always exits 0, so the flag only exists on validate.
+			if !strict {
+				exitErr(cerr.Usage("unknown lint flag: --exit-zero"))
+			}
+			exitZero = true
+		default:
+			if strings.HasPrefix(args[i], "-") {
+				exitErr(cerr.Usage("unknown %s flag: %s", commandName(strict), args[i]))
+			}
+			if bundlePath != "" {
+				exitErr(cerr.Usage("unexpected argument: %s", args[i]))
+			}
+			bundlePath = args[i]
+		}
+	}
+	if bundlePath == "" {
 		exitErr(cerr.Usage("bundle path required"))
 	}
-	b, err := bundle.Load(args[0])
+	if format != "json" && format != "sarif" {
+		exitErr(cerr.Usage("--format must be json or sarif, got %q", format))
+	}
+
+	b, err := bundle.Load(bundlePath)
 	if err != nil {
-		exitErr(cerr.IO(err, "load bundle %s", args[0]))
+		exitErr(cerr.IO(err, "load bundle %s", bundlePath))
 	}
 	r := validate.Validate(b)
 
-	findings := make([]map[string]any, 0, len(r.Findings))
+	// lint reports warnings only; validate reports everything.
+	kept := make([]validate.Finding, 0, len(r.Findings))
 	for _, f := range r.Findings {
 		if !strict && f.Severity == validate.SeverityError {
 			continue
 		}
-		findings = append(findings, map[string]any{
-			"concept_id": f.ConceptID,
-			"severity":   f.Severity.String(),
-			"message":    f.Message,
+		kept = append(kept, f)
+	}
+
+	if format == "sarif" {
+		out, err := validate.SARIF(kept, version)
+		if err != nil {
+			exitErr(cerr.Internal(err, "marshal sarif"))
+		}
+		fmt.Println(string(out))
+	} else {
+		findings := make([]map[string]any, 0, len(kept))
+		for _, f := range kept {
+			findings = append(findings, map[string]any{
+				"concept_id": f.ConceptID,
+				"rule":       f.RuleID,
+				"severity":   f.Severity.String(),
+				"message":    f.Message,
+			})
+		}
+
+		outputJSON(map[string]any{
+			"command":  commandName(strict),
+			"bundle":   b.Root,
+			"findings": findings,
+			"errors":   r.Errors,
+			"warnings": r.Warnings,
+			"valid":    !r.HasErrors(),
 		})
 	}
 
-	outputJSON(map[string]any{
-		"command":  commandName(strict),
-		"bundle":   b.Root,
-		"findings": findings,
-		"errors":   r.Errors,
-		"warnings": r.Warnings,
-		"valid":    !r.HasErrors(),
-	})
-
-	if strict && r.HasErrors() {
+	if strict && r.HasErrors() && !exitZero {
 		os.Exit(cerr.ExitCodeValidation)
 	}
 }
@@ -563,19 +611,26 @@ func allSchemaCommands() []schemaCommand {
 			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeIO, cerr.ExitCodeUsage},
 		},
 		{
-			Name:      "validate",
-			Short:     "Validate a bundle against the OKF spec",
-			Long:      "Checks every concept against OKF v0.2: required frontmatter (type), recommended fields (title, description, tags), non-empty body, valid cross-links, the provenance/trust/lifecycle families (sources, generated, verified, status, stale_after), the Attested Computation contract (runtime, parameters, computation, executor, attester), reserved-file structure (index.md, log.md), and legacy v0.1 constructs (timestamp, # Citations). Exits 1 if any errors are found.",
+			Name:  "validate",
+			Short: "Validate a bundle against the OKF spec",
+			Long:  "Checks every concept against OKF v0.2: required frontmatter (type), recommended fields (title, description, tags), non-empty body, valid cross-links, the provenance/trust/lifecycle families (sources, generated, verified, status, stale_after), the Attested Computation contract (runtime, parameters, computation, executor, attester), reserved-file structure (index.md, log.md), and legacy v0.1 constructs (timestamp, # Citations). Every finding carries a stable rule ID (okf/<family>/<check>). With --format sarif, stdout is a SARIF 2.1.0 document for CI code scanning. Exits 1 if any errors are found, unless --exit-zero is set.",
+			Flags: []schemaFlag{
+				{Name: "format", Type: "string", Default: "json", Description: "output format: json or sarif (SARIF 2.1.0)"},
+				{Name: "exit-zero", Type: "bool", Default: "false", Description: "always exit 0, even when errors are found (for CI steps that upload findings after the run)"},
+			},
 			Args:      []schemaArg{{Name: "bundle", Required: true}},
-			Stdout:    "json",
+			Stdout:    "json|sarif",
 			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeValidation, cerr.ExitCodeIO, cerr.ExitCodeUsage},
 		},
 		{
-			Name:      "lint",
-			Short:     "Check recommended fields and style (warnings only)",
-			Long:      "Same checks as validate but only emits warnings - errors are suppressed. Exits 0 even with warnings.",
+			Name:  "lint",
+			Short: "Check recommended fields and style (warnings only)",
+			Long:  "Same checks as validate but only emits warnings - errors are suppressed. Findings carry the same stable rule IDs, and --format sarif emits SARIF 2.1.0. Exits 0 even with warnings.",
+			Flags: []schemaFlag{
+				{Name: "format", Type: "string", Default: "json", Description: "output format: json or sarif (SARIF 2.1.0)"},
+			},
 			Args:      []schemaArg{{Name: "bundle", Required: true}},
-			Stdout:    "json",
+			Stdout:    "json|sarif",
 			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeIO, cerr.ExitCodeUsage},
 		},
 		{
