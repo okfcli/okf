@@ -175,13 +175,13 @@ func validateSources(r *Report, c *concept.Concept) {
 	refSet, defSet := labelSet(refs), labelSet(defs)
 	for _, label := range refs {
 		if !defSet[label] {
-			r.add(c.ID, SeverityWarning, fmt.Sprintf(
+			r.add(c.ID, RuleFootnoteUndefined, SeverityWarning, fmt.Sprintf(
 				"body: footnote [^%s] is referenced but never defined - renders as a dangling marker (OKF §5.1)", label))
 		}
 	}
 	for _, label := range defs {
 		if !refSet[label] {
-			r.add(c.ID, SeverityWarning, fmt.Sprintf(
+			r.add(c.ID, RuleFootnoteUnreferenced, SeverityWarning, fmt.Sprintf(
 				"body: footnote [^%s] is defined but never referenced - renders as nothing, so a source that reads as cited is absent from the output (OKF §5.1)", label))
 		}
 	}

@@ -38,6 +38,8 @@ const (
 	RuleSourceResourceRequired = "okf/sources/resource-required"
 	RuleUsageWindowMissing     = "okf/sources/usage-window-missing"
 	RuleFootnoteUnmatched      = "okf/sources/footnote-unmatched"
+	RuleFootnoteUndefined      = "okf/sources/footnote-undefined"
+	RuleFootnoteUnreferenced   = "okf/sources/footnote-unreferenced"
 
 	// computation: the Attested Computation contract (§10, §6.2)
 	RuleRuntimeRequired     = "okf/computation/runtime-required"
@@ -82,6 +84,8 @@ var ruleDescriptions = map[string]string{
 	RuleSourceResourceRequired: "source entries require 'resource' (OKF §5.1)",
 	RuleUsageWindowMissing:     "'usage_count' has no framing 'usage_window' (OKF §5.1)",
 	RuleFootnoteUnmatched:      "body footnote label has no matching 'sources[].id' (OKF §5.1)",
+	RuleFootnoteUndefined:      "body footnote is referenced but never defined (OKF §5.1)",
+	RuleFootnoteUnreferenced:   "body footnote is defined but never referenced (OKF §5.1)",
 
 	RuleRuntimeRequired:     "'runtime' is required for type Attested Computation (OKF §10.2)",
 	RuleComputationDup:      "computation is provided both inline and via the 'computation' path (OKF §10.3)",
