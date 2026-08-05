@@ -106,8 +106,46 @@ var (
 	citationsHeading = regexp.MustCompile(`(?mi)^#{1,6}\s+Citations\s*$`)
 	// footnoteRef matches inline footnote references [^label] (not definitions).
 	footnoteRef = regexp.MustCompile(`\[\^([^\]\s]+)\](?::)?`)
-	isoDate     = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
+	// footnoteMark matches any footnote marker [^label], reference or
+	// definition; footnoteLabels classifies each occurrence by position.
+	footnoteMark = regexp.MustCompile(`\[\^([^\]\s]+)\]`)
+	isoDate      = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 )
+
+// footnoteLabels splits a body's footnote markers into references and
+// definitions, each deduplicated in first-occurrence order so findings are
+// emitted deterministically. A definition is `[^label]:` at the start of a
+// line; every other `[^label]` occurrence, including one that happens to be
+// followed by a literal colon mid-line, is a reference (OKF §5.1).
+func footnoteLabels(body string) (refs, defs []string) {
+	seenRef := make(map[string]bool)
+	seenDef := make(map[string]bool)
+	for _, m := range footnoteMark.FindAllStringSubmatchIndex(body, -1) {
+		start, end, labelStart, labelEnd := m[0], m[1], m[2], m[3]
+		label := body[labelStart:labelEnd]
+		atLineStart := start == 0 || body[start-1] == '\n'
+		followedByColon := end < len(body) && body[end] == ':'
+		if atLineStart && followedByColon {
+			if !seenDef[label] {
+				seenDef[label] = true
+				defs = append(defs, label)
+			}
+		} else if !seenRef[label] {
+			seenRef[label] = true
+			refs = append(refs, label)
+		}
+	}
+	return refs, defs
+}
+
+// labelSet converts a label list to a membership set.
+func labelSet(labels []string) map[string]bool {
+	set := make(map[string]bool, len(labels))
+	for _, l := range labels {
+		set[l] = true
+	}
+	return set
+}
 
 // validateSources checks the §5.1 provenance family: resource is REQUIRED
 // within an entry, usage_count needs a framing usage_window, and body
@@ -126,6 +164,25 @@ func validateSources(r *Report, c *concept.Concept) {
 		if s.UsageCount != nil && s.UsageWindow == nil && fm.UsageWindow == nil {
 			r.add(c.ID, SeverityWarning, fmt.Sprintf(
 				"frontmatter: 'sources[%d].usage_count' has no framing 'usage_window' (entry or shared) (OKF §5.1)", i))
+		}
+	}
+
+	// Footnote definitions: a reference with no definition renders as a
+	// dangling marker, and a definition with no reference renders as
+	// nothing, silently dropping a source that reads as cited. Both are
+	// warnings regardless of whether the label also joins into sources[].id.
+	refs, defs := footnoteLabels(c.Body)
+	refSet, defSet := labelSet(refs), labelSet(defs)
+	for _, label := range refs {
+		if !defSet[label] {
+			r.add(c.ID, SeverityWarning, fmt.Sprintf(
+				"body: footnote [^%s] is referenced but never defined - renders as a dangling marker (OKF §5.1)", label))
+		}
+	}
+	for _, label := range defs {
+		if !refSet[label] {
+			r.add(c.ID, SeverityWarning, fmt.Sprintf(
+				"body: footnote [^%s] is defined but never referenced - renders as nothing, so a source that reads as cited is absent from the output (OKF §5.1)", label))
 		}
 	}
 
