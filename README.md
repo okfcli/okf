@@ -89,6 +89,20 @@ The JSON error envelope makes this trivial to automate:
 }
 ```
 
+Every finding also carries a stable rule ID (`okf/<family>/<check>`, e.g. `okf/links/broken`, `okf/frontmatter/type-required`), so automation can suppress or route specific rules instead of matching message text.
+
+#### CI code scanning
+
+`validate` can emit [SARIF 2.1.0](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html) instead of JSON, which GitHub ingests natively: findings show up as annotations on pull requests and in the repository's Security tab. `--exit-zero` reports findings without failing the step, so the upload always runs:
+
+```yaml
+# .github/workflows/okf-scan.yml
+- run: okf validate --format sarif --exit-zero ./bundles/ga4 > okf.sarif
+- uses: github/codeql-action/upload-sarif@v3
+  with:
+    sarif_file: okf.sarif
+```
+
 ### 4. Onboarding assistant
 
 A new engineer joins a team. An AI agent walks them through the team's knowledge map:
@@ -109,8 +123,8 @@ Progressive disclosure (index.md) lets the agent navigate level by level instead
 |---------|-------------|
 | `okf schema [command]` | Print machine-readable CLI metadata as JSON |
 | `okf init <bundle>` | Create a new empty OKF bundle |
-| `okf validate <bundle>` | Validate a bundle against the OKF spec (exit 1 on errors) |
-| `okf lint <bundle>` | Check recommended fields and style (warnings only) |
+| `okf validate <bundle> [--format json\|sarif] [--exit-zero]` | Validate a bundle against the OKF spec (exit 1 on errors) |
+| `okf lint <bundle> [--format json\|sarif]` | Check recommended fields and style (warnings only) |
 | `okf index <bundle>` | Generate index.md files (progressive disclosure) |
 | `okf list <bundle>` | List all concepts with ID, type, title, status, trust tier |
 | `okf show <bundle> <concept-id>` | Show a single concept's full content as JSON |

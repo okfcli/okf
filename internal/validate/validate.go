@@ -29,9 +29,11 @@ func (s Severity) String() string {
 	}
 }
 
-// Finding is a single validation result.
+// Finding is a single validation result. RuleID is the stable identifier of
+// the check that produced it (okf/<family>/<check>, see rules.go).
 type Finding struct {
 	ConceptID string
+	RuleID    string
 	Severity  Severity
 	Message   string
 }
@@ -65,32 +67,32 @@ func validateFrontmatter(r *Report, c *concept.Concept) {
 
 	// type is REQUIRED (OKF spec §4.1)
 	if strings.TrimSpace(fm.Type) == "" {
-		r.add(c.ID, SeverityError, "frontmatter: 'type' is required (OKF §4.1)")
+		r.add(c.ID, RuleTypeRequired, SeverityError, "frontmatter: 'type' is required (OKF §4.1)")
 	}
 
 	// Recommended fields (OKF spec §4.1)
 	if fm.Title == "" {
-		r.add(c.ID, SeverityWarning, "frontmatter: 'title' is recommended")
+		r.add(c.ID, RuleTitleRecommended, SeverityWarning, "frontmatter: 'title' is recommended")
 	}
 	if fm.Description == "" {
-		r.add(c.ID, SeverityWarning, "frontmatter: 'description' is recommended")
+		r.add(c.ID, RuleDescriptionRecommended, SeverityWarning, "frontmatter: 'description' is recommended")
 	}
 	if len(fm.Tags) == 0 {
-		r.add(c.ID, SeverityWarning, "frontmatter: 'tags' is recommended (empty or missing)")
+		r.add(c.ID, RuleTagsRecommended, SeverityWarning, "frontmatter: 'tags' is recommended (empty or missing)")
 	}
 
 	// timestamp, if present, should be a valid ISO 8601 datetime.
 	// yaml.v3 already parses it into time.Time; a zero value with a non-empty
 	// raw would indicate a parse issue, but we accept zero as "not set".
 	if !fm.Timestamp.IsZero() && fm.Timestamp.After(time.Now().Add(24*365*time.Hour)) {
-		r.add(c.ID, SeverityWarning, "frontmatter: 'timestamp' is more than a year in the future")
+		r.add(c.ID, RuleTimestampFuture, SeverityWarning, "frontmatter: 'timestamp' is more than a year in the future")
 	}
 }
 
 // validateBody checks the markdown body for structural issues.
 func validateBody(r *Report, c *concept.Concept) {
 	if strings.TrimSpace(c.Body) == "" {
-		r.add(c.ID, SeverityWarning, "body is empty - structural markdown is recommended (OKF §4.2)")
+		r.add(c.ID, RuleBodyEmpty, SeverityWarning, "body is empty - structural markdown is recommended (OKF §4.2)")
 	}
 }
 
@@ -129,11 +131,11 @@ func validateLinks(r *Report, b *bundle.Bundle) {
 				// regardless of fromConceptID), so an already-absolute broken
 				// link correctly falls through to the plain message below.
 				if absTarget := resolveLink("", link); absTarget != "" && absTarget != target && (b.HasConcept(absTarget) || b.HasReserved(absTarget)) {
-					r.add(c.ID, SeverityError, fmt.Sprintf(
+					r.add(c.ID, RuleLinkBroken, SeverityError, fmt.Sprintf(
 						"broken link: [%s] -> %s (relative links resolve from the current concept's directory; use /%s%s for an absolute path)",
 						link.Text, link.Target, absTarget, fragmentOf(link.Target)))
 				} else {
-					r.add(c.ID, SeverityError, fmt.Sprintf(
+					r.add(c.ID, RuleLinkBroken, SeverityError, fmt.Sprintf(
 						"broken link: [%s] -> %s (concept %s not found)",
 						link.Text, link.Target, target))
 				}
@@ -290,8 +292,8 @@ func normalizePath(p string) string {
 	return strings.Join(parts, "/")
 }
 
-func (r *Report) add(id string, sev Severity, msg string) {
-	r.Findings = append(r.Findings, Finding{ConceptID: id, Severity: sev, Message: msg})
+func (r *Report) add(id, rule string, sev Severity, msg string) {
+	r.Findings = append(r.Findings, Finding{ConceptID: id, RuleID: rule, Severity: sev, Message: msg})
 	switch sev {
 	case SeverityError:
 		r.Errors++

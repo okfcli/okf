@@ -32,17 +32,17 @@ func validateV02(r *Report, b *bundle.Bundle, c *concept.Concept) {
 
 	// §5.4 status is a fixed enum when present.
 	if s := strings.TrimSpace(fm.Status); s != "" && !concept.ValidStatuses[s] {
-		r.add(c.ID, SeverityError, fmt.Sprintf(
+		r.add(c.ID, RuleStatusInvalid, SeverityError, fmt.Sprintf(
 			"frontmatter: 'status' must be draft, stable, or deprecated, got %q (OKF §5.4)", fm.Status))
 	}
 
 	// §5.5 stale_after is an absolute YYYY-MM-DD date.
 	if s := strings.TrimSpace(fm.StaleAfter); s != "" {
 		if _, err := time.Parse("2006-01-02", s); err != nil {
-			r.add(c.ID, SeverityError, fmt.Sprintf(
+			r.add(c.ID, RuleStaleAfterInvalid, SeverityError, fmt.Sprintf(
 				"frontmatter: 'stale_after' must be an absolute YYYY-MM-DD date, got %q (OKF §5.5)", fm.StaleAfter))
 		} else if fm.IsStale(now()) {
-			r.add(c.ID, SeverityWarning, fmt.Sprintf(
+			r.add(c.ID, RuleStale, SeverityWarning, fmt.Sprintf(
 				"concept is stale: today >= stale_after (%s) (OKF §5.5)", fm.StaleAfter))
 		}
 	}
@@ -50,13 +50,13 @@ func validateV02(r *Report, b *bundle.Bundle, c *concept.Concept) {
 	// §5.2 generated.by is REQUIRED within generated.
 	if fm.Generated != nil {
 		if strings.TrimSpace(fm.Generated.By) == "" {
-			r.add(c.ID, SeverityError, "frontmatter: 'generated' requires 'by' (OKF §5.2)")
+			r.add(c.ID, RuleGeneratedByRequired, SeverityError, "frontmatter: 'generated' requires 'by' (OKF §5.2)")
 		} else {
 			checkActor(r, c.ID, "generated.by", fm.Generated.By)
 		}
 		if at := strings.TrimSpace(fm.Generated.At); at != "" {
 			if _, err := concept.ParseDatetime(at); err != nil {
-				r.add(c.ID, SeverityWarning, fmt.Sprintf(
+				r.add(c.ID, RuleGeneratedAtInvalid, SeverityWarning, fmt.Sprintf(
 					"frontmatter: 'generated.at' is not an ISO 8601 datetime: %q (OKF §5.2)", fm.Generated.At))
 			}
 		}
@@ -65,24 +65,24 @@ func validateV02(r *Report, b *bundle.Bundle, c *concept.Concept) {
 	// §5.2 verified events carry by and at.
 	for i, v := range fm.Verified {
 		if strings.TrimSpace(v.By) == "" || strings.TrimSpace(v.At) == "" {
-			r.add(c.ID, SeverityWarning, fmt.Sprintf(
+			r.add(c.ID, RuleVerifiedIncomplete, SeverityWarning, fmt.Sprintf(
 				"frontmatter: 'verified[%d]' should carry both 'by' and 'at' (OKF §5.2)", i))
 			continue
 		}
 		checkActor(r, c.ID, fmt.Sprintf("verified[%d].by", i), v.By)
 		if _, err := concept.ParseDatetime(v.At); err != nil {
-			r.add(c.ID, SeverityWarning, fmt.Sprintf(
+			r.add(c.ID, RuleVerifiedAtInvalid, SeverityWarning, fmt.Sprintf(
 				"frontmatter: 'verified[%d].at' is not an ISO 8601 datetime: %q (OKF §5.2)", i, v.At))
 		}
 	}
 
 	// §13.1 legacy v0.1 constructs.
 	if !fm.Timestamp.IsZero() {
-		r.add(c.ID, SeverityWarning,
+		r.add(c.ID, RuleLegacyTimestamp, SeverityWarning,
 			"frontmatter: legacy 'timestamp' is superseded by 'generated.at' in OKF v0.2 (§13.1)")
 	}
 	if citationsHeading.MatchString(c.Body) {
-		r.add(c.ID, SeverityWarning,
+		r.add(c.ID, RuleLegacyCitations, SeverityWarning,
 			"body: legacy '# Citations' list is superseded by the 'sources' frontmatter family in OKF v0.2 (§13.1)")
 	}
 
@@ -96,7 +96,7 @@ func validateV02(r *Report, b *bundle.Bundle, c *concept.Concept) {
 // convention of §7 (human:<id>, process:<id>, <producer>/<version>).
 func checkActor(r *Report, id, field, actor string) {
 	if concept.ActorKind(actor) == concept.ActorUnknown {
-		r.add(id, SeverityWarning, fmt.Sprintf(
+		r.add(id, RuleActorConvention, SeverityWarning, fmt.Sprintf(
 			"frontmatter: '%s' (%q) does not follow the actor convention: human:<id>, process:<id>, or <producer>/<version> (OKF §7)",
 			field, actor))
 	}
@@ -155,14 +155,14 @@ func validateSources(r *Report, c *concept.Concept) {
 	ids := make(map[string]bool)
 	for i, s := range fm.Sources {
 		if strings.TrimSpace(s.Resource) == "" {
-			r.add(c.ID, SeverityError, fmt.Sprintf(
+			r.add(c.ID, RuleSourceResourceRequired, SeverityError, fmt.Sprintf(
 				"frontmatter: 'sources[%d]' requires 'resource' (OKF §5.1)", i))
 		}
 		if s.ID != "" {
 			ids[s.ID] = true
 		}
 		if s.UsageCount != nil && s.UsageWindow == nil && fm.UsageWindow == nil {
-			r.add(c.ID, SeverityWarning, fmt.Sprintf(
+			r.add(c.ID, RuleUsageWindowMissing, SeverityWarning, fmt.Sprintf(
 				"frontmatter: 'sources[%d].usage_count' has no framing 'usage_window' (entry or shared) (OKF §5.1)", i))
 		}
 	}
@@ -175,13 +175,13 @@ func validateSources(r *Report, c *concept.Concept) {
 	refSet, defSet := labelSet(refs), labelSet(defs)
 	for _, label := range refs {
 		if !defSet[label] {
-			r.add(c.ID, SeverityWarning, fmt.Sprintf(
+			r.add(c.ID, RuleFootnoteUndefined, SeverityWarning, fmt.Sprintf(
 				"body: footnote [^%s] is referenced but never defined - renders as a dangling marker (OKF §5.1)", label))
 		}
 	}
 	for _, label := range defs {
 		if !refSet[label] {
-			r.add(c.ID, SeverityWarning, fmt.Sprintf(
+			r.add(c.ID, RuleFootnoteUnreferenced, SeverityWarning, fmt.Sprintf(
 				"body: footnote [^%s] is defined but never referenced - renders as nothing, so a source that reads as cited is absent from the output (OKF §5.1)", label))
 		}
 	}
@@ -199,7 +199,7 @@ func validateSources(r *Report, c *concept.Concept) {
 			continue
 		}
 		seen[label] = true
-		r.add(c.ID, SeverityWarning, fmt.Sprintf(
+		r.add(c.ID, RuleFootnoteUnmatched, SeverityWarning, fmt.Sprintf(
 			"body: footnote label [^%s] has no matching 'sources[].id' - labels are the join key for per-claim attribution (OKF §5.1)", label))
 	}
 }
@@ -217,7 +217,7 @@ func validateComputationContract(r *Report, b *bundle.Bundle, c *concept.Concept
 
 	// runtime is REQUIRED for this type.
 	if strings.TrimSpace(fm.Runtime) == "" {
-		r.add(c.ID, SeverityError,
+		r.add(c.ID, RuleRuntimeRequired, SeverityError,
 			"frontmatter: 'runtime' is required for type Attested Computation (OKF §10.2)")
 	}
 
@@ -225,16 +225,16 @@ func validateComputationContract(r *Report, b *bundle.Bundle, c *concept.Concept
 	hasFile := strings.TrimSpace(fm.Computation) != ""
 	switch {
 	case hasInline && hasFile:
-		r.add(c.ID, SeverityWarning,
+		r.add(c.ID, RuleComputationDup, SeverityWarning,
 			"computation is provided both inline (body Computation section) and via the 'computation' path; provide one (OKF §10.3)")
 	case !hasInline && !hasFile:
-		r.add(c.ID, SeverityWarning,
+		r.add(c.ID, RuleComputationMissing, SeverityWarning,
 			"no computation found: provide a body Computation section or a 'computation' path (OKF §10.3)")
 	}
 
 	for i, p := range fm.Parameters {
 		if strings.TrimSpace(p.Name) == "" || strings.TrimSpace(p.Type) == "" {
-			r.add(c.ID, SeverityWarning, fmt.Sprintf(
+			r.add(c.ID, RuleParameterIncomplete, SeverityWarning, fmt.Sprintf(
 				"frontmatter: parameter %d should carry 'name' and 'type' (OKF §10.2)", i))
 		}
 	}
@@ -271,7 +271,7 @@ func checkLocalPath(r *Report, b *bundle.Bundle, c *concept.Concept, field, path
 			return
 		}
 	}
-	r.add(c.ID, SeverityWarning, fmt.Sprintf(
+	r.add(c.ID, RuleContractPathMissing, SeverityWarning, fmt.Sprintf(
 		"'%s' points at %s, which does not exist in the bundle (OKF §6.2)", field, path))
 }
 
@@ -296,7 +296,7 @@ func validateIndexFile(r *Report, c *concept.Concept) {
 		return
 	}
 	if c.ID != "index" {
-		r.add(c.ID, SeverityError,
+		r.add(c.ID, RuleIndexFrontmatter, SeverityError,
 			"index.md files must not contain frontmatter; only the bundle-root index.md may carry 'okf_version' (OKF §8)")
 		return
 	}
@@ -304,14 +304,14 @@ func validateIndexFile(r *Report, c *concept.Concept) {
 	keys := frontmatterKeys(c)
 	for _, k := range keys {
 		if k != "okf_version" {
-			r.add(c.ID, SeverityWarning, fmt.Sprintf(
+			r.add(c.ID, RuleIndexFrontmatterKey, SeverityWarning, fmt.Sprintf(
 				"root index.md frontmatter carries %q; only 'okf_version' is permitted (OKF §8, §12)", k))
 		}
 	}
 	if v, ok := c.Frontmatter.Extensions["okf_version"]; ok {
 		ver := fmt.Sprintf("%v", v)
 		if !knownOKFVersions[ver] {
-			r.add(c.ID, SeverityWarning, fmt.Sprintf(
+			r.add(c.ID, RuleOKFVersionUnknown, SeverityWarning, fmt.Sprintf(
 				"root index.md declares okf_version %q, which this tool does not recognize (known: 0.1, 0.2) (OKF §12)", ver))
 		}
 	}
@@ -349,7 +349,7 @@ func validateLogFile(r *Report, c *concept.Concept) {
 		}
 		heading := strings.TrimSpace(strings.TrimPrefix(line, "## "))
 		if !isoDate.MatchString(heading) {
-			r.add(c.ID, SeverityError, fmt.Sprintf(
+			r.add(c.ID, RuleLogDateHeading, SeverityError, fmt.Sprintf(
 				"log.md date heading %q must use ISO 8601 YYYY-MM-DD form (OKF §9)", heading))
 		}
 	}
