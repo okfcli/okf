@@ -160,6 +160,64 @@ func TestValidate_FootnoteLabelMatchingSourceIDOK(t *testing.T) {
 	mustNotFinding(t, Validate(b), "rev-policy")
 }
 
+// A footnote referenced in the body but never defined renders as a dangling
+// marker (§5.1, §13.1): warn, don't fail validate.
+func TestValidate_FootnoteReferencedButNotDefinedWarns(t *testing.T) {
+	b := testBundle(t, map[string]string{
+		"a.md": "---\ntype: T\ntitle: A\ndescription: d\ntags: [x]\n---\n\nA claim.[^orphan]\n",
+	})
+	r := Validate(b)
+	mustFinding(t, r, SeverityWarning, "footnote [^orphan] is referenced but never defined")
+	if r.HasErrors() {
+		t.Fatalf("unexpected errors: %+v", r.Findings)
+	}
+}
+
+// A footnote defined but never referenced renders as nothing (§5.1, §13.1):
+// the source silently drops out of the rendered document. Warn, don't fail.
+func TestValidate_FootnoteDefinedButNotReferencedWarns(t *testing.T) {
+	b := testBundle(t, map[string]string{
+		"a.md": "---\ntype: T\ntitle: A\ndescription: d\ntags: [x]\n---\n\nprose with no footnote marks.\n\n[^unused]: something\n",
+	})
+	r := Validate(b)
+	mustFinding(t, r, SeverityWarning, "footnote [^unused] is defined but never referenced")
+	if r.HasErrors() {
+		t.Fatalf("unexpected errors: %+v", r.Findings)
+	}
+}
+
+// A label that is defined and IS present in sources[].id, but never
+// referenced in the body, still warns as unreferenced: the sources[].id join
+// check and the definition/reference check are independent concerns.
+func TestValidate_FootnoteDefinedInSourcesButNotReferencedStillWarns(t *testing.T) {
+	b := testBundle(t, map[string]string{
+		"a.md": "---\ntype: T\ntitle: A\ndescription: d\ntags: [x]\nsources:\n  - id: rev-policy\n    resource: https://example.com\n---\n\nprose with no footnote marks.\n\n[^rev-policy]: Revenue recognition policy\n",
+	})
+	mustFinding(t, Validate(b), SeverityWarning, "footnote [^rev-policy] is defined but never referenced")
+}
+
+// A label both defined and referenced produces neither new warning, whether
+// or not it also joins into sources[].id.
+func TestValidate_FootnoteDefinedAndReferencedNoWarning(t *testing.T) {
+	b := testBundle(t, map[string]string{
+		"a.md": "---\ntype: T\ntitle: A\ndescription: d\ntags: [x]\n---\n\nA claim.[^n1]\n\n[^n1]: a note\n",
+	})
+	r := Validate(b)
+	mustNotFinding(t, r, "is referenced but never defined")
+	mustNotFinding(t, r, "is defined but never referenced")
+}
+
+// A body with no footnote marks at all produces no footnote definition
+// findings.
+func TestValidate_NoFootnotesNoDefinitionFindings(t *testing.T) {
+	b := testBundle(t, map[string]string{
+		"a.md": okConcept,
+	})
+	r := Validate(b)
+	mustNotFinding(t, r, "is referenced but never defined")
+	mustNotFinding(t, r, "is defined but never referenced")
+}
+
 // --- §10 attested computations ---
 
 func TestValidate_AttestedComputationRequiresRuntime(t *testing.T) {
