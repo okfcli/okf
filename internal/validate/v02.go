@@ -113,24 +113,38 @@ var (
 )
 
 // footnoteLabels splits a body's footnote markers into references and
-// definitions. A definition is `[^label]:` at the start of a line; every
-// other `[^label]` occurrence, including one that happens to be followed by
-// a literal colon mid-line, is a reference (OKF §5.1).
-func footnoteLabels(body string) (refs, defs map[string]bool) {
-	refs = make(map[string]bool)
-	defs = make(map[string]bool)
+// definitions, each deduplicated in first-occurrence order so findings are
+// emitted deterministically. A definition is `[^label]:` at the start of a
+// line; every other `[^label]` occurrence, including one that happens to be
+// followed by a literal colon mid-line, is a reference (OKF §5.1).
+func footnoteLabels(body string) (refs, defs []string) {
+	seenRef := make(map[string]bool)
+	seenDef := make(map[string]bool)
 	for _, m := range footnoteMark.FindAllStringSubmatchIndex(body, -1) {
 		start, end, labelStart, labelEnd := m[0], m[1], m[2], m[3]
 		label := body[labelStart:labelEnd]
 		atLineStart := start == 0 || body[start-1] == '\n'
 		followedByColon := end < len(body) && body[end] == ':'
 		if atLineStart && followedByColon {
-			defs[label] = true
-		} else {
-			refs[label] = true
+			if !seenDef[label] {
+				seenDef[label] = true
+				defs = append(defs, label)
+			}
+		} else if !seenRef[label] {
+			seenRef[label] = true
+			refs = append(refs, label)
 		}
 	}
 	return refs, defs
+}
+
+// labelSet converts a label list to a membership set.
+func labelSet(labels []string) map[string]bool {
+	set := make(map[string]bool, len(labels))
+	for _, l := range labels {
+		set[l] = true
+	}
+	return set
 }
 
 // validateSources checks the §5.1 provenance family: resource is REQUIRED
@@ -153,19 +167,20 @@ func validateSources(r *Report, c *concept.Concept) {
 		}
 	}
 
-	// §5.1/§13.1 footnote definitions: a reference with no definition renders
-	// as a dangling marker, and a definition with no reference renders as
+	// Footnote definitions: a reference with no definition renders as a
+	// dangling marker, and a definition with no reference renders as
 	// nothing, silently dropping a source that reads as cited. Both are
 	// warnings regardless of whether the label also joins into sources[].id.
 	refs, defs := footnoteLabels(c.Body)
-	for label := range refs {
-		if !defs[label] {
+	refSet, defSet := labelSet(refs), labelSet(defs)
+	for _, label := range refs {
+		if !defSet[label] {
 			r.add(c.ID, SeverityWarning, fmt.Sprintf(
 				"body: footnote [^%s] is referenced but never defined - renders as a dangling marker (OKF §5.1)", label))
 		}
 	}
-	for label := range defs {
-		if !refs[label] {
+	for _, label := range defs {
+		if !refSet[label] {
 			r.add(c.ID, SeverityWarning, fmt.Sprintf(
 				"body: footnote [^%s] is defined but never referenced - renders as nothing, so a source that reads as cited is absent from the output (OKF §5.1)", label))
 		}

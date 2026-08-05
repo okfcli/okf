@@ -161,7 +161,7 @@ func TestValidate_FootnoteLabelMatchingSourceIDOK(t *testing.T) {
 }
 
 // A footnote referenced in the body but never defined renders as a dangling
-// marker (§5.1, §13.1): warn, don't fail validate.
+// marker (§5.1): warn, don't fail validate.
 func TestValidate_FootnoteReferencedButNotDefinedWarns(t *testing.T) {
 	b := testBundle(t, map[string]string{
 		"a.md": "---\ntype: T\ntitle: A\ndescription: d\ntags: [x]\n---\n\nA claim.[^orphan]\n",
@@ -173,7 +173,7 @@ func TestValidate_FootnoteReferencedButNotDefinedWarns(t *testing.T) {
 	}
 }
 
-// A footnote defined but never referenced renders as nothing (§5.1, §13.1):
+// A footnote defined but never referenced renders as nothing (§5.1):
 // the source silently drops out of the rendered document. Warn, don't fail.
 func TestValidate_FootnoteDefinedButNotReferencedWarns(t *testing.T) {
 	b := testBundle(t, map[string]string{
