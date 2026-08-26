@@ -84,3 +84,27 @@ release:
   draft: false
   prerelease: auto
   name_template: "v{{ .Version }}"
+
+# Publishes the okf cask to the tap on every non-prerelease release. The token
+# is a short-lived GitHub App installation token minted in release.yml; the
+# default Actions token cannot push to a second repository.
+homebrew_casks:
+  - name: okf
+    homepage: https://github.com/okfcli/okf
+    description: "Go CLI toolkit for the Open Knowledge Format (OKF), agentic-first and JSON-native"
+    skip_upload: auto
+    url:
+      verified: github.com/okfcli/okf/
+    # The binaries are not signed or notarized, so strip the Gatekeeper
+    # quarantine bit on macOS; without this, users get "okf is damaged and
+    # cannot be opened".
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/okf"]
+          end
+    repository:
+      owner: okfcli
+      name: homebrew-okf
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
