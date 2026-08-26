@@ -19,7 +19,10 @@ Google's reference OKF implementation is Python + Gemini + BigQuery - vendor-loc
 ## Quick start
 
 ```bash
-# Install
+# Install with Homebrew (macOS/Linux)
+brew install --cask okfcli/okf/okf
+
+# Or with go install
 go install github.com/okfcli/okf/cmd/okf@latest
 
 # Or build from source
