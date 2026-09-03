@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -80,6 +81,9 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	okfBin = filepath.Join(dir, "okf")
+	if runtime.GOOS == "windows" {
+		okfBin += ".exe"
+	}
 	build := exec.Command("go", "build", "-o", okfBin, ".")
 	if out, err := build.CombinedOutput(); err != nil {
 		panic("build okf: " + err.Error() + "\n" + string(out))
