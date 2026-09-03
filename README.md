@@ -87,10 +87,12 @@ The JSON error envelope makes this trivial to automate:
     "kind": "validation",
     "code": 400,
     "reason": "validationError",
-    "message": "broken link: [Users] -> users.md (concept tables/users not found)"
+    "message": "load bundle ./bundles/ga4: parse notes/README.md: no YAML frontmatter block found"
   }
 }
 ```
+
+Broken cross-links are reported as warnings, never errors: OKF §6.1 says consumers must tolerate them because a link may point at not-yet-written knowledge, so they do not flip `valid` or the exit code.
 
 Every finding also carries a stable rule ID (`okf/<family>/<check>`, e.g. `okf/links/broken`, `okf/frontmatter/type-required`), so automation can suppress or route specific rules instead of matching message text.
 
@@ -141,7 +143,7 @@ Progressive disclosure (index.md) lets the agent navigate level by level instead
 | Code | Meaning |
 |------|---------|
 | 0 | success |
-| 1 | validation error (spec violation, broken link, concept not found) |
+| 1 | validation error (spec violation, non-concept markdown file, concept not found) |
 | 2 | filesystem or I/O error |
 | 3 | internal error (unexpected) |
 | 4 | usage error (missing args, unknown command) |

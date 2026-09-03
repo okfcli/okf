@@ -97,6 +97,32 @@ func TestExtractFrontmatterLinks_Empty(t *testing.T) {
 	}
 }
 
+// Issue #26: OKF §6.1 and §11 say consumers MUST tolerate broken cross-links
+// and MUST NOT reject a bundle because of them, so a broken link is a
+// warning and never flips the conformance verdict.
+func TestValidateLinks_BrokenLinkIsWarningNotError(t *testing.T) {
+	b := testBundle(t, map[string]string{
+		"a.md": "---\ntype: T\ntitle: A\ndescription: d\ntags: [x]\n---\n\nSee [B](/b.md) and [img](/assets/diagram.png).",
+	})
+	r := Validate(b)
+	if r.HasErrors() {
+		t.Fatalf("broken links must not make the bundle invalid: %+v", r.Findings)
+	}
+	got := 0
+	for _, f := range r.Findings {
+		if f.RuleID != RuleLinkBroken {
+			continue
+		}
+		got++
+		if f.Severity != SeverityWarning {
+			t.Errorf("broken link severity = %s, want WARN: %+v", f.Severity, f)
+		}
+	}
+	if got != 2 {
+		t.Fatalf("got %d broken-link findings, want 2: %+v", got, r.Findings)
+	}
+}
+
 func TestValidate_FrontmatterLinkToNonexistentConcept(t *testing.T) {
 	b := testBundle(t, map[string]string{
 		"a.md": "---\ntype: T\ntitle: A\ndescription: d\ntags: [x]\nlinks:\n  - /does-not-exist\n---\n\nbody",
@@ -105,12 +131,12 @@ func TestValidate_FrontmatterLinkToNonexistentConcept(t *testing.T) {
 	r := Validate(b)
 	found := false
 	for _, f := range r.Findings {
-		if f.Severity == SeverityError && strings.Contains(f.Message, "does-not-exist") {
+		if f.Severity == SeverityWarning && strings.Contains(f.Message, "does-not-exist") {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("expected a broken-link error for the frontmatter link, findings = %+v", r.Findings)
+		t.Fatalf("expected a broken-link warning for the frontmatter link, findings = %+v", r.Findings)
 	}
 }
 
@@ -301,13 +327,13 @@ func TestValidateLinks_LinkToNonexistentIndexIsBrokenError(t *testing.T) {
 
 	var msg string
 	for _, f := range r.Findings {
-		if f.Severity == SeverityError && strings.Contains(f.Message, "broken link") {
+		if f.Severity == SeverityWarning && strings.Contains(f.Message, "broken link") {
 			msg = f.Message
 			break
 		}
 	}
 	if msg == "" {
-		t.Fatalf("expected a broken-link error for a nonexistent index.md, findings = %+v", r.Findings)
+		t.Fatalf("expected a broken-link warning for a nonexistent index.md, findings = %+v", r.Findings)
 	}
 	if !strings.Contains(msg, "sub/index") {
 		t.Errorf("error %q does not name the missing target sub/index", msg)

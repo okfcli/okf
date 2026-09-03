@@ -81,7 +81,7 @@ func validateV02(r *Report, b *bundle.Bundle, c *concept.Concept) {
 		r.add(c.ID, RuleLegacyTimestamp, SeverityWarning,
 			"frontmatter: legacy 'timestamp' is superseded by 'generated.at' in OKF v0.2 (§13.1)")
 	}
-	if citationsHeading.MatchString(c.Body) {
+	if citationsHeading.MatchString(maskCode(c.Body)) {
 		r.add(c.ID, RuleLegacyCitations, SeverityWarning,
 			"body: legacy '# Citations' list is superseded by the 'sources' frontmatter family in OKF v0.2 (§13.1)")
 	}
@@ -112,14 +112,112 @@ var (
 	isoDate      = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 )
 
+// maskCode replaces the contents of fenced code blocks and inline code spans
+// with spaces. Length and newlines are preserved, so byte offsets into the
+// result line up with the original body. Footnote and heading syntax inside
+// code renders as literal text, so scanners must not see it (issue #26).
+//
+// Fences open on a line whose first non-blank characters are three or more
+// backticks or tildes and close on a line with at least as many of the same
+// character. Inline spans open with a run of n backticks and close at the
+// next run of exactly n; an unclosed run is literal, as in CommonMark.
+func maskCode(body string) string {
+	out := []byte(body)
+	lines := strings.SplitAfter(body, "\n")
+	pos := 0
+	fenceChar, fenceLen := byte(0), 0
+	for _, line := range lines {
+		content := strings.TrimRight(line, "\r\n")
+		trimmed := strings.TrimLeft(content, " \t")
+		if fenceLen > 0 {
+			if run := leadingRun(trimmed); run >= fenceLen && trimmed[0] == fenceChar && strings.TrimSpace(trimmed[run:]) == "" {
+				fenceChar, fenceLen = 0, 0
+			}
+			blank(out, pos, pos+len(content))
+		} else if run := leadingRun(trimmed); run >= 3 {
+			fenceChar, fenceLen = trimmed[0], run
+			blank(out, pos, pos+len(content))
+		} else {
+			maskSpans(out, pos, content)
+		}
+		pos += len(line)
+	}
+	return string(out)
+}
+
+// leadingRun returns the length of the run of backticks or tildes at the
+// start of s, or 0 if s starts with neither.
+func leadingRun(s string) int {
+	if s == "" || (s[0] != '`' && s[0] != '~') {
+		return 0
+	}
+	n := 0
+	for n < len(s) && s[n] == s[0] {
+		n++
+	}
+	return n
+}
+
+// maskSpans blanks inline code spans within one line of prose. base is the
+// byte offset of line within out.
+func maskSpans(out []byte, base int, line string) {
+	i := 0
+	for i < len(line) {
+		open := strings.IndexByte(line[i:], '`')
+		if open == -1 {
+			return
+		}
+		start := i + open
+		n := 0
+		for start+n < len(line) && line[start+n] == '`' {
+			n++
+		}
+		j := start + n
+		for j < len(line) {
+			k := strings.IndexByte(line[j:], '`')
+			if k == -1 {
+				j = -1
+				break
+			}
+			j += k
+			m := 0
+			for j+m < len(line) && line[j+m] == '`' {
+				m++
+			}
+			if m == n {
+				break
+			}
+			j += m
+		}
+		if j == -1 {
+			// No matching closer: the backticks are literal text.
+			i = start + n
+			continue
+		}
+		blank(out, base+start, base+j+n)
+		i = j + n
+	}
+}
+
+// blank overwrites out[from:to] with spaces, leaving newlines intact.
+func blank(out []byte, from, to int) {
+	for i := from; i < to && i < len(out); i++ {
+		if out[i] != '\n' && out[i] != '\r' {
+			out[i] = ' '
+		}
+	}
+}
+
 // footnoteLabels splits a body's footnote markers into references and
 // definitions, each deduplicated in first-occurrence order so findings are
 // emitted deterministically. A definition is `[^label]:` at the start of a
 // line; every other `[^label]` occurrence, including one that happens to be
-// followed by a literal colon mid-line, is a reference (OKF §5.1).
-func footnoteLabels(body string) (refs, defs []string) {
+// followed by a literal colon mid-line, is a reference (OKF §5.1). dupDefs
+// lists labels defined more than once (issue #29).
+func footnoteLabels(body string) (refs, defs, dupDefs []string) {
 	seenRef := make(map[string]bool)
 	seenDef := make(map[string]bool)
+	seenDup := make(map[string]bool)
 	for _, m := range footnoteMark.FindAllStringSubmatchIndex(body, -1) {
 		start, end, labelStart, labelEnd := m[0], m[1], m[2], m[3]
 		label := body[labelStart:labelEnd]
@@ -129,13 +227,16 @@ func footnoteLabels(body string) (refs, defs []string) {
 			if !seenDef[label] {
 				seenDef[label] = true
 				defs = append(defs, label)
+			} else if !seenDup[label] {
+				seenDup[label] = true
+				dupDefs = append(dupDefs, label)
 			}
 		} else if !seenRef[label] {
 			seenRef[label] = true
 			refs = append(refs, label)
 		}
 	}
-	return refs, defs
+	return refs, defs, dupDefs
 }
 
 // labelSet converts a label list to a membership set.
@@ -159,6 +260,12 @@ func validateSources(r *Report, c *concept.Concept) {
 				"frontmatter: 'sources[%d]' requires 'resource' (OKF §5.1)", i))
 		}
 		if s.ID != "" {
+			// The id is the join key for footnotes; a second declaration
+			// leaves which entry wins undefined (issue #29).
+			if ids[s.ID] {
+				r.add(c.ID, RuleSourceIDDuplicate, SeverityWarning, fmt.Sprintf(
+					"frontmatter: 'sources[%d].id' %q is declared more than once - footnotes join by id, so which entry a reader sees is undefined (OKF §5.1)", i, s.ID))
+			}
 			ids[s.ID] = true
 		}
 		if s.UsageCount != nil && s.UsageWindow == nil && fm.UsageWindow == nil {
@@ -171,7 +278,8 @@ func validateSources(r *Report, c *concept.Concept) {
 	// dangling marker, and a definition with no reference renders as
 	// nothing, silently dropping a source that reads as cited. Both are
 	// warnings regardless of whether the label also joins into sources[].id.
-	refs, defs := footnoteLabels(c.Body)
+	body := maskCode(c.Body)
+	refs, defs, dupDefs := footnoteLabels(body)
 	refSet, defSet := labelSet(refs), labelSet(defs)
 	for _, label := range refs {
 		if !defSet[label] {
@@ -185,6 +293,10 @@ func validateSources(r *Report, c *concept.Concept) {
 				"body: footnote [^%s] is defined but never referenced - renders as nothing, so a source that reads as cited is absent from the output (OKF §5.1)", label))
 		}
 	}
+	for _, label := range dupDefs {
+		r.add(c.ID, RuleFootnoteDuplicate, SeverityWarning, fmt.Sprintf(
+			"body: footnote [^%s] is defined more than once - renderers disagree about which definition wins (OKF §5.1)", label))
+	}
 
 	// Per-claim attribution: footnote labels are join keys into sources[].id.
 	// Only meaningful when the concept declares source ids at all.
@@ -192,7 +304,7 @@ func validateSources(r *Report, c *concept.Concept) {
 		return
 	}
 	seen := make(map[string]bool)
-	for _, m := range footnoteRef.FindAllStringSubmatch(c.Body, -1) {
+	for _, m := range footnoteRef.FindAllStringSubmatch(body, -1) {
 		label := m[1]
 		if seen[label] || ids[label] {
 			seen[label] = true

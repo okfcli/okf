@@ -100,6 +100,11 @@ func validateBody(r *Report, c *concept.Concept) {
 // existing concept or reserved file (index.md, log.md). Both absolute
 // (/path/to/concept.md) and relative links are checked.
 //
+// A broken link is a warning, not an error: §6.1 says consumers MUST
+// tolerate broken links because they may represent not-yet-written
+// knowledge, and §11 says a bundle MUST NOT be rejected because of them
+// (issue #26). The finding still surfaces so authors can repair it.
+//
 // Relative links (without a leading /) resolve from the concept's own
 // directory: a link [X](organizations/cloaked) in pages/about.md targets
 // pages/organizations/cloaked, not organizations/cloaked. When such a
@@ -131,11 +136,11 @@ func validateLinks(r *Report, b *bundle.Bundle) {
 				// regardless of fromConceptID), so an already-absolute broken
 				// link correctly falls through to the plain message below.
 				if absTarget := resolveLink("", link); absTarget != "" && absTarget != target && (b.HasConcept(absTarget) || b.HasReserved(absTarget)) {
-					r.add(c.ID, RuleLinkBroken, SeverityError, fmt.Sprintf(
+					r.add(c.ID, RuleLinkBroken, SeverityWarning, fmt.Sprintf(
 						"broken link: [%s] -> %s (relative links resolve from the current concept's directory; use /%s%s for an absolute path)",
 						link.Text, link.Target, absTarget, fragmentOf(link.Target)))
 				} else {
-					r.add(c.ID, RuleLinkBroken, SeverityError, fmt.Sprintf(
+					r.add(c.ID, RuleLinkBroken, SeverityWarning, fmt.Sprintf(
 						"broken link: [%s] -> %s (concept %s not found)",
 						link.Text, link.Target, target))
 				}
