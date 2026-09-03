@@ -90,3 +90,41 @@ func TestKindString(t *testing.T) {
 		}
 	}
 }
+
+// Issue #27: the JSON envelope carries only Message, so a wrapped cause that
+// names the failing file must be part of the message or the user never sees it.
+func TestIOMessageIncludesCause(t *testing.T) {
+	cause := errors.New("parse README.md: no YAML frontmatter block found")
+	e := IO(cause, "load bundle %s", "demo")
+	want := "load bundle demo: parse README.md: no YAML frontmatter block found"
+	if e.Message != want {
+		t.Errorf("message = %q, want %q", e.Message, want)
+	}
+	if e.ToEnvelope()["error"].(map[string]any)["message"] != want {
+		t.Errorf("envelope message does not carry the cause")
+	}
+}
+
+func TestIONilCauseMessageUnchanged(t *testing.T) {
+	if e := IO(nil, "plain"); e.Message != "plain" {
+		t.Errorf("message = %q, want plain", e.Message)
+	}
+}
+
+func TestInternalMessageIncludesCause(t *testing.T) {
+	e := Internal(errors.New("boom"), "marshal sarif")
+	if e.Message != "marshal sarif: boom" {
+		t.Errorf("message = %q", e.Message)
+	}
+}
+
+func TestFromDoesNotDuplicateMessage(t *testing.T) {
+	plain := errors.New("plain error")
+	e := From(plain)
+	if e.Message != "plain error" {
+		t.Errorf("message = %q, want %q", e.Message, "plain error")
+	}
+	if !errors.Is(e, plain) {
+		t.Error("From lost the cause")
+	}
+}

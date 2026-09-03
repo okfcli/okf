@@ -2,6 +2,7 @@
 package bundle
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -19,6 +20,30 @@ type Bundle struct {
 	conceptByID  map[string]*concept.Concept
 	Reserved     []*concept.Concept // index.md / log.md files (parsed if present)
 	reservedByID map[string]*concept.Concept
+}
+
+// ParseError reports a .md file whose contents could not be parsed as a
+// concept: no frontmatter block, an unclosed one, or invalid YAML. Path is
+// bundle-relative so callers can name the file (issue #27). It is distinct
+// from a filesystem failure, which is returned unwrapped as an I/O error.
+type ParseError struct {
+	Path string
+	Err  error
+}
+
+func (e *ParseError) Error() string { return "parse " + e.Path + ": " + e.Err.Error() }
+
+// Unwrap exposes the underlying parse failure for errors.Is / errors.As.
+func (e *ParseError) Unwrap() error { return e.Err }
+
+// wrapParse classifies a concept parse failure: a filesystem error stays an
+// I/O error, anything else is a ParseError naming the file.
+func wrapParse(relPath string, err error) error {
+	var pathErr *fs.PathError
+	if errors.As(err, &pathErr) {
+		return fmt.Errorf("read %s: %w", relPath, err)
+	}
+	return &ParseError{Path: relPath, Err: err}
 }
 
 // Load walks a bundle directory and parses every .md file.
@@ -53,7 +78,9 @@ func Load(root string) (*Bundle, error) {
 			}
 			return nil
 		}
-		if !strings.HasSuffix(d.Name(), ".md") {
+		// Skip hidden files (editor drafts, backups) the same way hidden
+		// directories are skipped: they are not part of the bundle.
+		if !strings.HasSuffix(d.Name(), ".md") || strings.HasPrefix(d.Name(), ".") {
 			return nil
 		}
 
@@ -70,7 +97,7 @@ func Load(root string) (*Bundle, error) {
 		if concept.ReservedNames[strings.ToLower(d.Name())] {
 			c, perr := concept.ParseReserved(path, relPath)
 			if perr != nil {
-				return fmt.Errorf("parse reserved %s: %w", relPath, perr)
+				return wrapParse(relPath, perr)
 			}
 			b.Reserved = append(b.Reserved, c)
 			b.reservedByID[c.ID] = c
@@ -79,7 +106,7 @@ func Load(root string) (*Bundle, error) {
 
 		c, err := concept.Parse(path, relPath)
 		if err != nil {
-			return fmt.Errorf("parse %s: %w", relPath, err)
+			return wrapParse(relPath, err)
 		}
 		b.Concepts = append(b.Concepts, c)
 		b.conceptByID[c.ID] = c

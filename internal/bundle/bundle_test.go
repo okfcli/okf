@@ -1,6 +1,7 @@
 package bundle
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -199,5 +200,71 @@ func TestLoad_GeneratedIndexIsDiscoverable(t *testing.T) {
 	}
 	if tablesIndex.Body == "" {
 		t.Error("generated index Body is empty, want raw index content")
+	}
+}
+
+// Issue #27: a .md file that is not a concept must fail with an error that
+// names the file and the reason, distinguishable from a filesystem failure.
+func TestLoad_MissingFrontmatterNamesFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "index.md"), []byte("# Demo\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "docs"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "docs", "README.md"), []byte("# Demo project\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Load(dir)
+	if err == nil {
+		t.Fatal("expected an error for markdown without frontmatter")
+	}
+	var pe *ParseError
+	if !errors.As(err, &pe) {
+		t.Fatalf("error %T %q is not a *ParseError", err, err)
+	}
+	if pe.Path != "docs/README.md" {
+		t.Errorf("ParseError.Path = %q, want docs/README.md", pe.Path)
+	}
+	if !errors.Is(err, concept.ErrNoFrontmatter) {
+		t.Errorf("error does not unwrap to ErrNoFrontmatter: %v", err)
+	}
+	for _, want := range []string{"docs/README.md", "no YAML frontmatter"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+}
+
+func TestLoad_UnclosedFrontmatterIsParseError(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.md"), []byte("---\ntype: T\n\nbody"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(dir)
+	var pe *ParseError
+	if !errors.As(err, &pe) || pe.Path != "a.md" {
+		t.Fatalf("want *ParseError for a.md, got %T %v", err, err)
+	}
+}
+
+func TestLoad_HiddenFilesSkipped(t *testing.T) {
+	// Hidden directories are already skipped; hidden files (editor drafts,
+	// backups) get the same treatment rather than taking the bundle down.
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.md"), []byte("---\ntype: T\n---\n\nbody"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".draft.md"), []byte("# not a concept\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	b, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if len(b.Concepts) != 1 || b.Concepts[0].ID != "a" {
+		t.Fatalf("got concepts %+v, want just a", b.Concepts)
 	}
 }

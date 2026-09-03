@@ -40,6 +40,8 @@ const (
 	RuleFootnoteUnmatched      = "okf/sources/footnote-unmatched"
 	RuleFootnoteUndefined      = "okf/sources/footnote-undefined"
 	RuleFootnoteUnreferenced   = "okf/sources/footnote-unreferenced"
+	RuleFootnoteDuplicate      = "okf/sources/footnote-duplicate"
+	RuleSourceIDDuplicate      = "okf/sources/id-duplicate"
 
 	// computation: the Attested Computation contract (§10, §6.2)
 	RuleRuntimeRequired     = "okf/computation/runtime-required"
@@ -66,7 +68,7 @@ var ruleDescriptions = map[string]string{
 
 	RuleBodyEmpty: "body is empty, structural markdown is recommended (OKF §4.2)",
 
-	RuleLinkBroken: "cross-link does not resolve to a concept in the bundle (OKF §6)",
+	RuleLinkBroken: "cross-link does not resolve to a concept in the bundle; consumers must tolerate this (OKF §6.1, §11)",
 
 	RuleStatusInvalid:     "'status' must be draft, stable, or deprecated (OKF §5.4)",
 	RuleStaleAfterInvalid: "'stale_after' must be an absolute YYYY-MM-DD date (OKF §5.5)",
@@ -86,6 +88,8 @@ var ruleDescriptions = map[string]string{
 	RuleFootnoteUnmatched:      "body footnote label has no matching 'sources[].id' (OKF §5.1)",
 	RuleFootnoteUndefined:      "body footnote is referenced but never defined (OKF §5.1)",
 	RuleFootnoteUnreferenced:   "body footnote is defined but never referenced (OKF §5.1)",
+	RuleFootnoteDuplicate:      "body footnote is defined more than once (OKF §5.1)",
+	RuleSourceIDDuplicate:      "'sources[].id' is declared more than once (OKF §5.1)",
 
 	RuleRuntimeRequired:     "'runtime' is required for type Attested Computation (OKF §10.2)",
 	RuleComputationDup:      "computation is provided both inline and via the 'computation' path (OKF §10.3)",

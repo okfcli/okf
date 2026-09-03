@@ -396,3 +396,125 @@ func TestValidate_ContractPathRootRelativeFallback(t *testing.T) {
 	r := Validate(b)
 	mustNotFinding(t, r, "does not exist")
 }
+
+// --- issue #26: footnote syntax inside code is literal text ---
+
+func TestMaskCode_PreservesLengthAndNewlines(t *testing.T) {
+	in := "a `x` b\n```\n[^c]\n```\nd ``[^e]`` f\n"
+	out := maskCode(in)
+	if len(out) != len(in) {
+		t.Fatalf("maskCode changed length: %d -> %d", len(in), len(out))
+	}
+	for i := range in {
+		if in[i] == '\n' && out[i] != '\n' {
+			t.Fatalf("newline at %d was masked", i)
+		}
+	}
+	if strings.Contains(out, "[^c]") || strings.Contains(out, "[^e]") || strings.Contains(out, "x") {
+		t.Fatalf("code content survived masking: %q", out)
+	}
+	if !strings.Contains(out, "a ") || !strings.Contains(out, " b\n") || !strings.Contains(out, "d ") || !strings.Contains(out, " f\n") {
+		t.Fatalf("prose outside code was masked: %q", out)
+	}
+}
+
+func TestMaskCode_UnclosedSpanIsLiteral(t *testing.T) {
+	in := "a `b [^c]"
+	if got := maskCode(in); got != in {
+		t.Fatalf("unclosed backtick should be literal, got %q", got)
+	}
+}
+
+func TestMaskCode_TildeFenceAndIndentedFence(t *testing.T) {
+	in := "~~~\n[^a]\n~~~\n  ```go\n[^b]\n  ```\n[^c]"
+	out := maskCode(in)
+	if strings.Contains(out, "[^a]") || strings.Contains(out, "[^b]") {
+		t.Fatalf("fenced content survived: %q", out)
+	}
+	if !strings.Contains(out, "[^c]") {
+		t.Fatalf("prose after fence was masked: %q", out)
+	}
+}
+
+func TestValidate_FootnoteInCodeSpanIgnored(t *testing.T) {
+	b := testBundle(t, map[string]string{
+		"a.md": "---\ntype: T\ntitle: A\ndescription: d\ntags: [x]\n---\n\nAttribute claims with `[^id]` footnotes.",
+	})
+	r := Validate(b)
+	mustNotFinding(t, r, "footnote")
+}
+
+func TestValidate_FootnoteInFencedBlockIgnored(t *testing.T) {
+	b := testBundle(t, map[string]string{
+		"a.md": "---\ntype: T\ntitle: A\ndescription: d\ntags: [x]\n---\n\nExample:\n\n```markdown\nA claim.[^src]\n\n[^src]: example\n```\n",
+	})
+	r := Validate(b)
+	mustNotFinding(t, r, "footnote")
+}
+
+func TestValidate_FootnoteOutsideCodeStillReported(t *testing.T) {
+	b := testBundle(t, map[string]string{
+		"a.md": "---\ntype: T\ntitle: A\ndescription: d\ntags: [x]\n---\n\nSee `code` then a claim.[^id]",
+	})
+	mustFinding(t, Validate(b), SeverityWarning, "[^id] is referenced but never defined")
+}
+
+// --- issue #29: duplicates are invisible to the join rule by construction ---
+
+func TestValidate_DuplicateSourceIDWarns(t *testing.T) {
+	b := testBundle(t, map[string]string{
+		"a.md": "---\ntype: T\ntitle: A\ndescription: d\ntags: [x]\nsources:\n  - id: d\n    title: First\n    resource: https://example.com/doc\n  - id: d\n    title: Second\n    resource: https://example.com/doc\n---\n\nA claim.[^d]\n\n[^d]: [First](https://example.com/doc)\n",
+	})
+	r := Validate(b)
+	mustFinding(t, r, SeverityWarning, "'sources[1].id' \"d\" is declared more than once")
+	if r.HasErrors() {
+		t.Fatalf("duplicate id is advisory, must not be an error: %+v", r.Findings)
+	}
+	for _, f := range r.Findings {
+		if strings.Contains(f.Message, "declared more than once") && f.RuleID != RuleSourceIDDuplicate {
+			t.Fatalf("wrong rule id %q", f.RuleID)
+		}
+	}
+}
+
+func TestValidate_DuplicateSourceIDReportedOnce(t *testing.T) {
+	b := testBundle(t, map[string]string{
+		"a.md": "---\ntype: T\ntitle: A\ndescription: d\ntags: [x]\nsources:\n  - id: d\n    resource: r\n  - id: d\n    resource: r\n  - id: d\n    resource: r\n---\n\n[^d]\n\n[^d]: x\n",
+	})
+	n := 0
+	for _, f := range Validate(b).Findings {
+		if f.RuleID == RuleSourceIDDuplicate {
+			n++
+		}
+	}
+	if n != 2 {
+		t.Fatalf("want one finding per extra copy (2), got %d", n)
+	}
+}
+
+func TestValidate_DuplicateFootnoteDefinitionWarns(t *testing.T) {
+	b := testBundle(t, map[string]string{
+		"a.md": "---\ntype: T\ntitle: A\ndescription: d\ntags: [x]\nsources:\n  - id: d\n    resource: r\n---\n\nA claim.[^d]\n\n[^d]: [First](https://example.com/doc)\n[^d]: [Second](https://example.com/doc)\n",
+	})
+	r := Validate(b)
+	mustFinding(t, r, SeverityWarning, "footnote [^d] is defined more than once")
+	if r.HasErrors() {
+		t.Fatalf("duplicate definition is advisory: %+v", r.Findings)
+	}
+	for _, f := range r.Findings {
+		if strings.Contains(f.Message, "defined more than once") && f.RuleID != RuleFootnoteDuplicate {
+			t.Fatalf("wrong rule id %q", f.RuleID)
+		}
+	}
+	// The existing undefined/unreferenced rules must stay quiet: the label is
+	// both referenced and defined.
+	mustNotFinding(t, r, "never defined")
+	mustNotFinding(t, r, "never referenced")
+}
+
+func TestValidate_SingleDefinitionNoDuplicateWarning(t *testing.T) {
+	b := testBundle(t, map[string]string{
+		"a.md": "---\ntype: T\ntitle: A\ndescription: d\ntags: [x]\n---\n\nA claim.[^d] and again.[^d]\n\n[^d]: x\n",
+	})
+	mustNotFinding(t, Validate(b), "more than once")
+}

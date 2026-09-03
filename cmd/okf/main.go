@@ -10,6 +10,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -94,7 +95,7 @@ Commands:
 
 Exit codes:
   0  success
-  1  validation error (spec violation, broken link, bad input)
+  1  validation error (spec violation, bad input)
   2  filesystem or I/O error
   3  internal error (unexpected)
   4  usage error (missing args, unknown command)
@@ -130,13 +131,47 @@ func exitErr(err error) {
 	os.Exit(e.ExitCode())
 }
 
-func mustBundle(args []string) *bundle.Bundle {
+// rejectFlags returns a usage error when any argument looks like a flag.
+// Commands that take no flags call it so a mistyped or unsupported flag is
+// reported as a usage mistake rather than being treated as a bundle path
+// and failing as I/O (issue #31).
+func rejectFlags(cmd string, args []string) *cerr.Error {
+	for _, a := range args {
+		if strings.HasPrefix(a, "-") {
+			return cerr.Usage("unknown %s flag: %s", cmd, a)
+		}
+	}
+	return nil
+}
+
+// loadBundle loads the bundle at path and maps loader failures onto the
+// error kinds the CLI documents. A .md file that is not a concept violates
+// OKF §11, so it is a validation error that names the file (issue #27);
+// anything else is a filesystem error.
+func loadBundle(path string) (*bundle.Bundle, *cerr.Error) {
+	b, err := bundle.Load(path)
+	if err == nil {
+		return b, nil
+	}
+	var pe *bundle.ParseError
+	if errors.As(err, &pe) {
+		e := cerr.Validation("load bundle %s: %v", path, err)
+		e.Hint = "every non-reserved .md file in a bundle needs a YAML frontmatter block (OKF §11); add frontmatter to " + pe.Path + " or move it out of the bundle"
+		return nil, e
+	}
+	return nil, cerr.IO(err, "load bundle %s", path)
+}
+
+func mustBundle(cmd string, args []string) *bundle.Bundle {
+	if err := rejectFlags(cmd, args); err != nil {
+		exitErr(err)
+	}
 	if len(args) == 0 {
 		exitErr(cerr.Usage("bundle path required"))
 	}
-	b, err := bundle.Load(args[0])
+	b, err := loadBundle(args[0])
 	if err != nil {
-		exitErr(cerr.IO(err, "load bundle %s", args[0]))
+		exitErr(err)
 	}
 	return b
 }
@@ -180,9 +215,9 @@ func runValidate(args []string, strict bool) {
 		exitErr(cerr.Usage("--format must be json or sarif, got %q", format))
 	}
 
-	b, err := bundle.Load(bundlePath)
-	if err != nil {
-		exitErr(cerr.IO(err, "load bundle %s", bundlePath))
+	b, lerr := loadBundle(bundlePath)
+	if lerr != nil {
+		exitErr(lerr)
 	}
 	r := validate.Validate(b)
 
@@ -237,10 +272,19 @@ func commandName(strict bool) string {
 // --- index ---
 
 func runIndex(args []string) {
+	if err := rejectFlags("index", args); err != nil {
+		exitErr(err)
+	}
 	if len(args) == 0 {
 		exitErr(cerr.Usage("bundle path required"))
 	}
 	root := args[0]
+	// Load before writing anything so a bundle that does not parse (issue
+	// #27) is reported by name instead of being half-indexed and then
+	// silently miscounted below.
+	if _, lerr := loadBundle(root); lerr != nil {
+		exitErr(lerr)
+	}
 	if err := index.Generate(root); err != nil {
 		exitErr(cerr.IO(err, "generate index in %s", root))
 	}
@@ -248,11 +292,12 @@ func runIndex(args []string) {
 	// Collect generated index file paths.
 	var indexFiles []string
 	b, err := bundle.Load(root)
-	if err == nil {
-		for _, r := range b.Reserved {
-			if r.ID == "index" || strings.HasSuffix(r.ID, "/index") {
-				indexFiles = append(indexFiles, r.Path)
-			}
+	if err != nil {
+		exitErr(cerr.IO(err, "reload bundle %s after indexing", root))
+	}
+	for _, r := range b.Reserved {
+		if r.ID == "index" || strings.HasSuffix(r.ID, "/index") {
+			indexFiles = append(indexFiles, r.Path)
 		}
 	}
 
@@ -267,7 +312,7 @@ func runIndex(args []string) {
 // --- graph ---
 
 func runGraph(args []string) {
-	b := mustBundle(args)
+	b := mustBundle("graph", args)
 	g := graph.Build(b)
 	s := g.Stats()
 
@@ -301,7 +346,7 @@ func runGraph(args []string) {
 // --- list ---
 
 func runList(args []string) {
-	b := mustBundle(args)
+	b := mustBundle("list", args)
 
 	concepts := make([]map[string]string, 0, len(b.Concepts))
 	for _, c := range b.Concepts {
@@ -325,10 +370,13 @@ func runList(args []string) {
 // --- show ---
 
 func runShow(args []string) {
+	if err := rejectFlags("show", args); err != nil {
+		exitErr(err)
+	}
 	if len(args) < 2 {
 		exitErr(cerr.Usage("usage: okf show <bundle> <concept-id>"))
 	}
-	b := mustBundle(args[:1])
+	b := mustBundle("show", args[:1])
 	c, err := show.Show(b, args[1])
 	if err != nil {
 		exitErr(cerr.Validation("%s", err))
@@ -431,6 +479,9 @@ func runSearch(args []string) {
 	if len(args) == 0 {
 		exitErr(cerr.Usage("usage: okf search <bundle> [--tag <tag>] [--type <type>] [--text <query>]"))
 	}
+	if err := rejectFlags("search", args[:1]); err != nil {
+		exitErr(err)
+	}
 	bundlePath := args[0]
 	rest := args[1:]
 
@@ -460,9 +511,9 @@ func runSearch(args []string) {
 		}
 	}
 
-	b, err := bundle.Load(bundlePath)
-	if err != nil {
-		exitErr(cerr.IO(err, "load bundle %s", bundlePath))
+	b, lerr := loadBundle(bundlePath)
+	if lerr != nil {
+		exitErr(lerr)
 	}
 
 	results := search.Search(b, f)
@@ -487,6 +538,9 @@ func runSearch(args []string) {
 // --- init ---
 
 func runInit(args []string) {
+	if err := rejectFlags("init", args); err != nil {
+		exitErr(err)
+	}
 	if len(args) == 0 {
 		exitErr(cerr.Usage("usage: okf init <bundle-path>"))
 	}
@@ -512,10 +566,13 @@ func runInit(args []string) {
 // --- backlinks ---
 
 func runBacklinks(args []string) {
+	if err := rejectFlags("backlinks", args); err != nil {
+		exitErr(err)
+	}
 	if len(args) < 2 {
 		exitErr(cerr.Usage("usage: okf backlinks <bundle> <concept-id>"))
 	}
-	b := mustBundle(args[:1])
+	b := mustBundle("backlinks", args[:1])
 	conceptID := args[1]
 	links := backlinks.Backlinks(b, conceptID)
 
@@ -608,7 +665,7 @@ func allSchemaCommands() []schemaCommand {
 			Long:      "Creates a bundle directory with standard subdirectories (tables, datasets, playbooks), a root index.md, and a .gitignore. Fails if the directory already exists.",
 			Args:      []schemaArg{{Name: "bundle", Required: true}},
 			Stdout:    "json",
-			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeIO, cerr.ExitCodeUsage},
+			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeValidation, cerr.ExitCodeIO, cerr.ExitCodeUsage},
 		},
 		{
 			Name:  "validate",
@@ -631,7 +688,7 @@ func allSchemaCommands() []schemaCommand {
 			},
 			Args:      []schemaArg{{Name: "bundle", Required: true}},
 			Stdout:    "json|sarif",
-			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeIO, cerr.ExitCodeUsage},
+			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeValidation, cerr.ExitCodeIO, cerr.ExitCodeUsage},
 		},
 		{
 			Name:      "index",
@@ -639,7 +696,7 @@ func allSchemaCommands() []schemaCommand {
 			Long:      "Writes index.md into every directory containing concept documents, providing progressive disclosure per OKF spec §6.",
 			Args:      []schemaArg{{Name: "bundle", Required: true}},
 			Stdout:    "json",
-			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeIO, cerr.ExitCodeUsage},
+			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeValidation, cerr.ExitCodeIO, cerr.ExitCodeUsage},
 		},
 		{
 			Name:      "list",
@@ -647,7 +704,7 @@ func allSchemaCommands() []schemaCommand {
 			Long:      "Lists every concept document with its ID, type, title, lifecycle status, and trust tier (unverified, machine-confirmed, or human-reviewed).",
 			Args:      []schemaArg{{Name: "bundle", Required: true}},
 			Stdout:    "json",
-			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeIO, cerr.ExitCodeUsage},
+			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeValidation, cerr.ExitCodeIO, cerr.ExitCodeUsage},
 		},
 		{
 			Name:  "show",
@@ -673,7 +730,7 @@ func allSchemaCommands() []schemaCommand {
 				{Name: "bundle", Required: true},
 			},
 			Stdout:    "json",
-			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeIO, cerr.ExitCodeUsage},
+			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeValidation, cerr.ExitCodeIO, cerr.ExitCodeUsage},
 		},
 		{
 			Name:  "backlinks",
@@ -684,7 +741,7 @@ func allSchemaCommands() []schemaCommand {
 				{Name: "concept-id", Required: true},
 			},
 			Stdout:    "json",
-			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeIO, cerr.ExitCodeUsage},
+			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeValidation, cerr.ExitCodeIO, cerr.ExitCodeUsage},
 		},
 		{
 			Name:      "graph",
@@ -692,7 +749,7 @@ func allSchemaCommands() []schemaCommand {
 			Long:      "Builds the directed cross-link graph from concept markdown links and prints nodes, edges, and summary statistics.",
 			Args:      []schemaArg{{Name: "bundle", Required: true}},
 			Stdout:    "json",
-			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeIO, cerr.ExitCodeUsage},
+			ExitCodes: []int{cerr.ExitCodeOK, cerr.ExitCodeValidation, cerr.ExitCodeIO, cerr.ExitCodeUsage},
 		},
 		{
 			Name:      "version",

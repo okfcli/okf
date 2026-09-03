@@ -56,7 +56,7 @@ type ExitCodeDoc struct {
 // ExitCodeDocs enumerates every exit code the CLI may emit, in stable order.
 var ExitCodeDocs = []ExitCodeDoc{
 	{ExitCodeOK, "success"},
-	{ExitCodeValidation, "validation error (spec violation, broken link, bad input)"},
+	{ExitCodeValidation, "validation error (spec violation, bad input)"},
 	{ExitCodeIO, "filesystem or I/O error"},
 	{ExitCodeInternal, "internal error (unexpected)"},
 	{ExitCodeUsage, "usage error (missing args, unknown command)"},
@@ -120,6 +120,16 @@ func format(msg string, args ...any) string {
 	return fmt.Sprintf(msg, args...)
 }
 
+// withCause appends cause to msg. The JSON envelope and the stderr line carry
+// only Message, so a wrapped cause that names the failing file or reason has
+// to be folded into it or the user never sees it (issue #27).
+func withCause(msg string, cause error) string {
+	if cause == nil {
+		return msg
+	}
+	return msg + ": " + cause.Error()
+}
+
 // Validation builds a validation error.
 func Validation(msg string, args ...any) *Error {
 	return &Error{
@@ -136,7 +146,7 @@ func IO(cause error, msg string, args ...any) *Error {
 		Kind:    KindIO,
 		Code:    500,
 		Reason:  "ioError",
-		Message: format(msg, args...),
+		Message: withCause(format(msg, args...), cause),
 		Cause:   cause,
 	}
 }
@@ -157,7 +167,7 @@ func Internal(cause error, msg string, args ...any) *Error {
 		Kind:    KindInternal,
 		Code:    500,
 		Reason:  "internalError",
-		Message: format(msg, args...),
+		Message: withCause(format(msg, args...), cause),
 		Cause:   cause,
 	}
 }
@@ -172,5 +182,11 @@ func From(err error) *Error {
 	if errors.As(err, &e) {
 		return e
 	}
-	return Internal(err, "%s", err.Error())
+	return &Error{
+		Kind:    KindInternal,
+		Code:    500,
+		Reason:  "internalError",
+		Message: err.Error(),
+		Cause:   err,
+	}
 }
