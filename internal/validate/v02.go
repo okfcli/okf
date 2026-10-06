@@ -36,14 +36,15 @@ func validateV02(r *Report, b *bundle.Bundle, c *concept.Concept) {
 			"frontmatter: 'status' must be draft, stable, or deprecated, got %q (OKF §5.4)", fm.Status))
 	}
 
-	// §5.5 stale_after is an absolute YYYY-MM-DD date.
+	// §5.5 stale_after is an absolute instant: an RFC 3339 datetime or a
+	// YYYY-MM-DD date.
 	if s := strings.TrimSpace(fm.StaleAfter); s != "" {
-		if _, err := time.Parse("2006-01-02", s); err != nil {
+		if _, err := concept.ParseStaleAfter(s); err != nil {
 			r.add(c.ID, RuleStaleAfterInvalid, SeverityError, fmt.Sprintf(
-				"frontmatter: 'stale_after' must be an absolute YYYY-MM-DD date, got %q (OKF §5.5)", fm.StaleAfter))
+				"frontmatter: 'stale_after' must be an RFC 3339 datetime or a YYYY-MM-DD date, got %q (OKF §5.5)", fm.StaleAfter))
 		} else if fm.IsStale(now()) {
 			r.add(c.ID, RuleStale, SeverityWarning, fmt.Sprintf(
-				"concept is stale: today >= stale_after (%s) (OKF §5.5)", fm.StaleAfter))
+				"concept is stale: now >= stale_after (%s) (OKF §5.5)", fm.StaleAfter))
 		}
 	}
 

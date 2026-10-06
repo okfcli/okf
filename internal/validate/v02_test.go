@@ -61,7 +61,9 @@ func TestValidate_MalformedStaleAfter(t *testing.T) {
 	b := testBundle(t, map[string]string{
 		"a.md": "---\ntype: T\ntitle: A\ndescription: d\ntags: [x]\nstale_after: soon\n---\n\nbody",
 	})
-	mustFinding(t, Validate(b), SeverityError, "stale_after")
+	r := Validate(b)
+	mustFinding(t, r, SeverityError, "stale_after")
+	mustFinding(t, r, SeverityError, "RFC 3339 datetime or a YYYY-MM-DD date")
 }
 
 func TestValidate_StaleConceptWarns(t *testing.T) {
@@ -80,6 +82,52 @@ func TestValidate_FreshConceptNoStaleWarning(t *testing.T) {
 		"a.md": "---\ntype: T\ntitle: A\ndescription: d\ntags: [x]\nstale_after: 2026-09-23\n---\n\nbody",
 	})
 	mustNotFinding(t, Validate(b), "stale")
+}
+
+// ruleFindings returns the findings carrying the given rule ID.
+func ruleFindings(r *Report, ruleID string) []Finding {
+	var out []Finding
+	for _, f := range r.Findings {
+		if f.RuleID == ruleID {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// The spec's own §5.5 example form is a datetime (okfcli/okf#34).
+func TestValidate_DatetimeStaleAfter(t *testing.T) {
+	defer func(orig func() time.Time) { now = orig }(now)
+	now = func() time.Time { return time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC) }
+	cases := []struct {
+		name      string
+		value     string
+		wantStale bool
+	}{
+		{"past UTC", "2026-09-01T00:00:00Z", true},
+		{"past with offset", "2026-10-06T18:30:00+07:00", true},
+		{"quoted past", `"2026-09-01T00:00:00+00:00"`, true},
+		{"future UTC", "2027-10-06T00:00:00Z", false},
+		{"future with offset", "2026-10-06T05:30:00-07:00", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b := testBundle(t, map[string]string{
+				"a.md": "---\ntype: T\ntitle: A\ndescription: d\ntags: [x]\nstale_after: " + tc.value + "\n---\n\nbody",
+			})
+			r := Validate(b)
+			if got := ruleFindings(r, RuleStaleAfterInvalid); len(got) != 0 {
+				t.Fatalf("unexpected %s findings: %+v", RuleStaleAfterInvalid, got)
+			}
+			stale := ruleFindings(r, RuleStale)
+			if tc.wantStale && (len(stale) != 1 || stale[0].Severity != SeverityWarning) {
+				t.Fatalf("want one %s warning, findings = %+v", RuleStale, r.Findings)
+			}
+			if !tc.wantStale && len(stale) != 0 {
+				t.Fatalf("unexpected %s findings: %+v", RuleStale, stale)
+			}
+		})
+	}
 }
 
 // --- §5.2 generated / verified ---

@@ -71,8 +71,8 @@ var ruleDescriptions = map[string]string{
 	RuleLinkBroken: "cross-link does not resolve to a concept in the bundle; consumers must tolerate this (OKF §6.1, §11)",
 
 	RuleStatusInvalid:     "'status' must be draft, stable, or deprecated (OKF §5.4)",
-	RuleStaleAfterInvalid: "'stale_after' must be an absolute YYYY-MM-DD date (OKF §5.5)",
-	RuleStale:             "concept is past its stale_after date (OKF §5.5)",
+	RuleStaleAfterInvalid: "'stale_after' must be an RFC 3339 datetime or a YYYY-MM-DD date (OKF §5.5)",
+	RuleStale:             "concept is past its stale_after instant (OKF §5.5)",
 
 	RuleGeneratedByRequired: "'generated' requires 'by' (OKF §5.2)",
 	RuleGeneratedAtInvalid:  "'generated.at' is not an ISO 8601 datetime (OKF §5.2)",

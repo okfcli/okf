@@ -157,18 +157,28 @@ func (f *Frontmatter) GeneratedAt() (at time.Time, ok bool) {
 	return time.Time{}, false
 }
 
-// IsStale reports whether the concept is stale as of today: stale when
-// today >= stale_after (OKF §5.5). Absent or unparseable stale_after is never
+// IsStale reports whether the concept is stale as of now: stale when
+// now >= stale_after (OKF §5.5). Absent or unparseable stale_after is never
 // stale; validation flags the unparseable case separately.
-func (f *Frontmatter) IsStale(today time.Time) bool {
+func (f *Frontmatter) IsStale(now time.Time) bool {
 	if strings.TrimSpace(f.StaleAfter) == "" {
 		return false
 	}
-	d, err := time.Parse("2006-01-02", f.StaleAfter)
+	t, err := ParseStaleAfter(f.StaleAfter)
 	if err != nil {
 		return false
 	}
-	return !today.Before(d)
+	return !now.Before(t)
+}
+
+// ParseStaleAfter parses a stale_after value (OKF §5.5): an RFC 3339 datetime
+// with any offset, stale from that instant on, or a YYYY-MM-DD date, stale
+// from the start of that day (00:00 UTC) on.
+func ParseStaleAfter(s string) (time.Time, error) {
+	if t, err := ParseDatetime(s); err == nil {
+		return t, nil
+	}
+	return time.Parse("2006-01-02", s)
 }
 
 // ActorKind classifies an actor string per the convention of §7:

@@ -165,6 +165,46 @@ func TestIsStale_AbsentNeverStale(t *testing.T) {
 	}
 }
 
+func TestIsStale_DateAndDatetimeForms(t *testing.T) {
+	now := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name      string
+		value     string // raw YAML scalar
+		wantErr   bool
+		wantStale bool
+	}{
+		{"date past", "2026-09-01", false, true},
+		{"date future", "2026-12-01", false, false},
+		{"date today", "2026-10-06", false, true},
+		{"datetime past", "2026-09-01T00:00:00Z", false, true},
+		{"datetime future", "2027-10-06T00:00:00Z", false, false},
+		{"datetime at now", "2026-10-06T12:00:00Z", false, true},
+		{"datetime just after now", "2026-10-06T12:00:01Z", false, false},
+		{"datetime quoted", `"2026-09-01T00:00:00Z"`, false, true},
+		{"datetime positive offset past", "2026-10-06T18:30:00+07:00", false, true},    // 11:30Z
+		{"datetime negative offset future", "2026-10-06T05:30:00-07:00", false, false}, // 12:30Z
+		{"invalid word", "soon", true, false},
+		{"invalid date", "2026-13-01", true, false},
+		{"invalid datetime without offset", "2026-09-01T00:00:00", true, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := []byte("---\ntype: T\nstale_after: " + tc.value + "\n---\nbody")
+			c, err := ParseBytes(raw, "a.md", "/tmp/a.md")
+			if err != nil {
+				t.Fatalf("ParseBytes: %v", err)
+			}
+			_, err = ParseStaleAfter(c.Frontmatter.StaleAfter)
+			if (err != nil) != tc.wantErr {
+				t.Errorf("ParseStaleAfter(%q) error = %v, wantErr %v", c.Frontmatter.StaleAfter, err, tc.wantErr)
+			}
+			if got := c.Frontmatter.IsStale(now); got != tc.wantStale {
+				t.Errorf("IsStale(%s) with stale_after %q = %v, want %v", now.Format(time.RFC3339), c.Frontmatter.StaleAfter, got, tc.wantStale)
+			}
+		})
+	}
+}
+
 // --- §13.1 generated.at with legacy timestamp fallback ---
 
 func TestGeneratedAt_FallbackToLegacyTimestamp(t *testing.T) {
