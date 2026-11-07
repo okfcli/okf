@@ -195,7 +195,7 @@ The format is intentionally minimal: no schema registry, no central authority, n
 
 - **Provenance (§5.1)** - the `sources` family with per-source credibility signals (`author`, `usage_count`, `last_modified`) and `usage_window`; footnote labels are validated as join keys into `sources[].id` for per-claim attribution.
 - **Trust (§5.2–5.3)** - `generated` and `verified` are parsed (a bare `verified` mapping is treated as a one-element list, as the spec requires) and every concept gets a derived trust tier: `unverified`, `machine-confirmed`, or `human-reviewed`.
-- **Lifecycle (§5.4–5.5)** - `status` (draft/stable/deprecated, default stable) and `stale_after`; `validate` flags stale concepts and invalid values, and `show`/`list` expose the effective state.
+- **Lifecycle (§5.4–5.5)** - `status` (draft/stable/deprecated, default stable) and `stale_after` (an RFC 3339 instant such as `2026-09-23T00:00:00Z`, or a `YYYY-MM-DD` date meaning midnight UTC); `validate` flags stale concepts and invalid values, and `show`/`list` expose the effective state.
 - **Attested Computations (§10)** - the full contract (`runtime`, `parameters`, `computation`, `executor`, `attester`) is parsed and validated: `runtime` is required, the computation must exist inline or as a file, and contract paths that point at missing files are flagged.
 - **Actor convention (§7)** - `generated.by` and `verified[].by` are checked against `human:<id>`, `process:<id>`, and `<producer>/<version>` forms.
 - **Versioning (§12)** - `okf init` declares `okf_version: "0.2"` in the root `index.md`; `okf index` preserves an existing declaration when regenerating.
