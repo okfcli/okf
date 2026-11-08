@@ -218,3 +218,40 @@ func TestE2E_IndexRefusesNonConceptMarkdown(t *testing.T) {
 		t.Error("index.md was written even though the bundle failed to load")
 	}
 }
+
+// --- issue #34: validate accepts the spec's datetime form of stale_after ---
+
+func TestE2E_StaleAfterDatetimeIsValid(t *testing.T) {
+	dir := t.TempDir()
+	// A past instant, in the exact form OKF §5.5 shows, so the concept is stale.
+	writeFile(t, filepath.Join(dir, "a.md"),
+		"---\ntype: T\ntitle: A\ndescription: d\ntags: [x]\nstale_after: 2026-09-23T00:00:00Z\n---\n\nbody")
+
+	out, code := runOKF(t, "validate", dir)
+	if code != 0 {
+		t.Fatalf("validate exit %d, want 0; out=%s", code, out)
+	}
+	if strings.Contains(out, "stale-after-invalid") {
+		t.Errorf("validate reported stale-after-invalid for an RFC 3339 instant: %s", out)
+	}
+
+	out, code = runOKF(t, "show", dir, "a")
+	if code != 0 {
+		t.Fatalf("show exit %d, want 0; out=%s", code, out)
+	}
+	var got struct {
+		Concept struct {
+			Stale      bool   `json:"stale"`
+			StaleAfter string `json:"stale_after"`
+		} `json:"concept"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("bad json %q", out)
+	}
+	if !got.Concept.Stale {
+		t.Errorf("show stale = false, want true for a past stale_after instant")
+	}
+	if got.Concept.StaleAfter != "2026-09-23T00:00:00Z" {
+		t.Errorf("show stale_after = %q, want verbatim %q", got.Concept.StaleAfter, "2026-09-23T00:00:00Z")
+	}
+}

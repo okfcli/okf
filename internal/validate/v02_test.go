@@ -82,6 +82,58 @@ func TestValidate_FreshConceptNoStaleWarning(t *testing.T) {
 	mustNotFinding(t, Validate(b), "stale")
 }
 
+// --- issue #34: OKF §5.5 calls stale_after an absolute instant ---
+
+func TestValidate_StaleAfterDatetimeAccepted(t *testing.T) {
+	defer func(orig func() time.Time) { now = orig }(now)
+	now = func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
+	for _, v := range []string{
+		"2026-09-23T00:00:00Z", // the spec's own §5.5 example
+		"2026-10-03T00:00:00+00:00",
+		`"2026-10-03T00:00:00Z"`,
+		"2026-10-03T08:30:00-05:00",
+		"2026-10-03",
+	} {
+		b := testBundle(t, map[string]string{
+			"a.md": "---\ntype: T\ntitle: A\ndescription: d\ntags: [x]\nstale_after: " + v + "\n---\n\nbody",
+		})
+		r := Validate(b)
+		for _, f := range r.Findings {
+			if f.RuleID == RuleStaleAfterInvalid {
+				t.Errorf("stale_after %s: unexpected %s finding: %s", v, f.RuleID, f.Message)
+			}
+		}
+		if r.HasErrors() {
+			t.Errorf("stale_after %s: report has errors: %+v", v, r.Findings)
+		}
+	}
+}
+
+func TestValidate_StaleDatetimeConceptWarns(t *testing.T) {
+	defer func(orig func() time.Time) { now = orig }(now)
+	now = func() time.Time { return time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC) }
+	b := testBundle(t, map[string]string{
+		"a.md": "---\ntype: T\ntitle: A\ndescription: d\ntags: [x]\nstale_after: 2026-10-03T12:00:00Z\n---\n\nbody",
+	})
+	mustFinding(t, Validate(b), SeverityWarning, "concept is stale")
+}
+
+func TestValidate_FreshDatetimeConceptNoStaleWarning(t *testing.T) {
+	defer func(orig func() time.Time) { now = orig }(now)
+	now = func() time.Time { return time.Date(2026, 10, 3, 11, 59, 59, 0, time.UTC) }
+	b := testBundle(t, map[string]string{
+		"a.md": "---\ntype: T\ntitle: A\ndescription: d\ntags: [x]\nstale_after: 2026-10-03T12:00:00Z\n---\n\nbody",
+	})
+	mustNotFinding(t, Validate(b), "concept is stale")
+}
+
+func TestValidate_StaleAfterWithoutZoneRejected(t *testing.T) {
+	b := testBundle(t, map[string]string{
+		"a.md": "---\ntype: T\ntitle: A\ndescription: d\ntags: [x]\nstale_after: \"2026-10-03T00:00:00\"\n---\n\nbody",
+	})
+	mustFinding(t, Validate(b), SeverityError, "RFC 3339")
+}
+
 // --- §5.2 generated / verified ---
 
 func TestValidate_GeneratedWithoutBy(t *testing.T) {

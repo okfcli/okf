@@ -165,6 +165,81 @@ func TestIsStale_AbsentNeverStale(t *testing.T) {
 	}
 }
 
+// --- issue #34: stale_after is an absolute instant, not only a date ---
+
+func TestParseStaleAfter(t *testing.T) {
+	utc := func(y int, mo time.Month, d, h, mi, sec, ns int) time.Time {
+		return time.Date(y, mo, d, h, mi, sec, ns, time.UTC)
+	}
+	cases := []struct {
+		in   string
+		want time.Time
+	}{
+		// Date-only remains accepted and means midnight UTC.
+		{"2026-10-03", utc(2026, 10, 3, 0, 0, 0, 0)},
+		// The form OKF §5.5 itself uses as its example.
+		{"2026-09-23T00:00:00Z", utc(2026, 9, 23, 0, 0, 0, 0)},
+		{"2026-10-03T00:00:00+00:00", utc(2026, 10, 3, 0, 0, 0, 0)},
+		{"2026-10-03T12:00:00+02:00", utc(2026, 10, 3, 10, 0, 0, 0)},
+		{"2026-10-03T00:00:00.5Z", utc(2026, 10, 3, 0, 0, 0, 500000000)},
+		{"  2026-10-03T00:00:00Z  ", utc(2026, 10, 3, 0, 0, 0, 0)},
+	}
+	for _, tc := range cases {
+		got, err := ParseStaleAfter(tc.in)
+		if err != nil {
+			t.Errorf("ParseStaleAfter(%q) error: %v", tc.in, err)
+			continue
+		}
+		if !got.Equal(tc.want) {
+			t.Errorf("ParseStaleAfter(%q) = %v, want %v", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestParseStaleAfter_Invalid(t *testing.T) {
+	for _, in := range []string{
+		"",
+		"soon",
+		"2026-13-01",
+		"2026-10-03T00:00:00", // no zone: not an absolute instant
+		"2026/10/03",
+		"03-10-2026",
+	} {
+		if _, err := ParseStaleAfter(in); err == nil {
+			t.Errorf("ParseStaleAfter(%q) = nil error, want error", in)
+		}
+	}
+}
+
+func TestIsStale_Datetime(t *testing.T) {
+	raw := []byte("---\ntype: T\nstale_after: 2026-10-03T12:00:00+02:00\n---\nbody")
+	c, err := ParseBytes(raw, "a.md", "/tmp/a.md")
+	if err != nil {
+		t.Fatalf("ParseBytes: %v", err)
+	}
+	instant := time.Date(2026, 10, 3, 10, 0, 0, 0, time.UTC)
+	if c.Frontmatter.IsStale(instant.Add(-time.Second)) {
+		t.Error("IsStale(one second before) = true, want false")
+	}
+	if !c.Frontmatter.IsStale(instant) {
+		t.Error("IsStale(at instant) = false, want true (stale when now >= stale_after)")
+	}
+	if !c.Frontmatter.IsStale(instant.Add(time.Hour)) {
+		t.Error("IsStale(after) = false, want true")
+	}
+}
+
+func TestIsStale_QuotedDatetime(t *testing.T) {
+	raw := []byte("---\ntype: T\nstale_after: \"2026-10-03T00:00:00Z\"\n---\nbody")
+	c, err := ParseBytes(raw, "a.md", "/tmp/a.md")
+	if err != nil {
+		t.Fatalf("ParseBytes: %v", err)
+	}
+	if !c.Frontmatter.IsStale(time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC)) {
+		t.Error("IsStale(quoted datetime, at instant) = false, want true")
+	}
+}
+
 // --- §13.1 generated.at with legacy timestamp fallback ---
 
 func TestGeneratedAt_FallbackToLegacyTimestamp(t *testing.T) {
