@@ -356,27 +356,6 @@ func TestValidateLinks_LinkToExistingLogIsValid(t *testing.T) {
 	}
 }
 
-// --- helpers ---
-
-func testBundle(t *testing.T, files map[string]string) *bundle.Bundle {
-	t.Helper()
-	dir := t.TempDir()
-	for path, content := range files {
-		full := filepath.Join(dir, path)
-		if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
-			t.Fatalf("mkdir: %v", err)
-		}
-		if err := os.WriteFile(full, []byte(content), 0644); err != nil {
-			t.Fatalf("write: %v", err)
-		}
-	}
-	b, err := bundle.Load(dir)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	return b
-}
-
 // --- issue #48: link syntax inside code is literal text ---
 
 func TestExtractLinks_IgnoresCode(t *testing.T) {
@@ -412,4 +391,25 @@ func TestValidate_LinkInCodeIgnored(t *testing.T) {
 	})
 	r := Validate(b)
 	mustNotFinding(t, r, "broken link")
+}
+
+// --- helpers ---
+
+func testBundle(t *testing.T, files map[string]string) *bundle.Bundle {
+	t.Helper()
+	dir := t.TempDir()
+	for path, content := range files {
+		full := filepath.Join(dir, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+	b, err := bundle.Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	return b
 }
