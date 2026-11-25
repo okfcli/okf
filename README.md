@@ -205,6 +205,15 @@ Graph and backlinks also follow §6.2 path-valued references: `sources[].resourc
 
 All four reference bundles in the upstream repository (acme_retail, crypto_bitcoin, ga4, stackoverflow) load and validate with zero errors.
 
+## Agent skill
+
+`skills/okf/` is a [Claude Code skill](https://docs.claude.com/en/docs/claude-code/skills) (a plain `SKILL.md` plus references) that teaches an agent how to write concepts, validate them, and audit a bundle using this CLI. Install it with:
+
+```bash
+cp -R skills/okf ~/.claude/skills/okf                # all projects
+# or: <project>/.claude/skills/okf                   # one project
+```
+
 ## Project status
 
 Early development. The CLI surface is functional:
