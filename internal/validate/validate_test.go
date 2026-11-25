@@ -376,3 +376,40 @@ func testBundle(t *testing.T, files map[string]string) *bundle.Bundle {
 	}
 	return b
 }
+
+// --- issue #48: link syntax inside code is literal text ---
+
+func TestExtractLinks_IgnoresCode(t *testing.T) {
+	body := "Real: [real](a.md).\n" +
+		"Inline: `errors.AsType[*MyErr](err)` returns the match.\n" +
+		"```go\n" +
+		"if e, ok := errors.AsType[*MyErr](err); ok {\n" +
+		"\thandle(e)\n" +
+		"}\n" +
+		"```\n" +
+		"Code in text: [`cfg`](cfg.md).\n"
+
+	links := extractLinks(body)
+	want := []Link{
+		{Text: "real", Target: "a.md"},
+		{Text: "`cfg`", Target: "cfg.md"},
+	}
+	if len(links) != len(want) {
+		t.Fatalf("got %d links, want %d: %+v", len(links), len(want), links)
+	}
+	for i := range want {
+		if links[i] != want[i] {
+			t.Errorf("link[%d] = %+v, want %+v", i, links[i], want[i])
+		}
+	}
+}
+
+func TestValidate_LinkInCodeIgnored(t *testing.T) {
+	b := testBundle(t, map[string]string{
+		"a.md": "---\ntype: T\ntitle: A\ndescription: d\ntags: [x]\n---\n\n" +
+			"Inline: `errors.AsType[*MyErr](err)`.\n\n" +
+			"```go\nif e, ok := errors.AsType[*MyErr](err); ok {\n\thandle(e)\n}\n```\n",
+	})
+	r := Validate(b)
+	mustNotFinding(t, r, "broken link")
+}

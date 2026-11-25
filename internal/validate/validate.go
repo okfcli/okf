@@ -198,27 +198,34 @@ func ExtractFrontmatterLinks(links []string) []Link {
 }
 
 // extractLinks parses all markdown links [text](target) from a body.
+//
+// Link syntax inside fenced code blocks and inline code spans renders as
+// literal text (for example a Go call such as errors.AsType[*E](err)), so the
+// scan runs over a masked copy of the body (issue #48). maskCode preserves
+// byte offsets, so text and target are sliced from the original body and keep
+// any code they contain, as in [`cfg`](cfg.md).
 func extractLinks(body string) []Link {
 	var links []Link
+	scan := maskCode(body)
 	i := 0
-	for i < len(body) {
+	for i < len(scan) {
 		// Find '['
-		bracket := strings.IndexByte(body[i:], '[')
+		bracket := strings.IndexByte(scan[i:], '[')
 		if bracket == -1 {
 			break
 		}
 		start := i + bracket
-		closeBracket := strings.IndexByte(body[start:], ']')
+		closeBracket := strings.IndexByte(scan[start:], ']')
 		if closeBracket == -1 {
 			break
 		}
 		textEnd := start + closeBracket
 		// Check for '(' immediately after ']'
-		if textEnd+1 >= len(body) || body[textEnd+1] != '(' {
+		if textEnd+1 >= len(scan) || scan[textEnd+1] != '(' {
 			i = textEnd + 1
 			continue
 		}
-		closeParen := strings.IndexByte(body[textEnd+2:], ')')
+		closeParen := strings.IndexByte(scan[textEnd+2:], ')')
 		if closeParen == -1 {
 			break
 		}
