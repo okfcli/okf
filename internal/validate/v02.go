@@ -115,8 +115,9 @@ var (
 
 // maskCode replaces the contents of fenced code blocks and inline code spans
 // with spaces. Length and newlines are preserved, so byte offsets into the
-// result line up with the original body. Footnote and heading syntax inside
-// code renders as literal text, so scanners must not see it (issue #26).
+// result line up with the original body. Footnote, heading, and link syntax
+// inside code renders as literal text, so scanners must not see it (issues
+// #26 and #48).
 //
 // Fences open on a line whose first non-blank characters are three or more
 // backticks or tildes and close on a line with at least as many of the same

@@ -92,7 +92,7 @@ The JSON error envelope makes this trivial to automate:
 }
 ```
 
-Broken cross-links are reported as warnings, never errors: OKF §6.1 says consumers must tolerate them because a link may point at not-yet-written knowledge, so they do not flip `valid` or the exit code.
+Broken cross-links are reported as warnings, never errors: OKF §6.1 says consumers must tolerate them because a link may point at not-yet-written knowledge, so they do not flip `valid` or the exit code. Link syntax inside inline code spans and fenced code blocks is literal text and is not checked as a link.
 
 Every finding also carries a stable rule ID (`okf/<family>/<check>`, e.g. `okf/links/broken`, `okf/frontmatter/type-required`), so automation can suppress or route specific rules instead of matching message text.
 

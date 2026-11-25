@@ -198,27 +198,31 @@ func ExtractFrontmatterLinks(links []string) []Link {
 }
 
 // extractLinks parses all markdown links [text](target) from a body.
+//
+// Link syntax inside code is literal text, so the scan runs over the masked
+// body (issue #48). Offsets line up, so text and target come from the original.
 func extractLinks(body string) []Link {
 	var links []Link
+	scan := maskCode(body)
 	i := 0
-	for i < len(body) {
+	for i < len(scan) {
 		// Find '['
-		bracket := strings.IndexByte(body[i:], '[')
+		bracket := strings.IndexByte(scan[i:], '[')
 		if bracket == -1 {
 			break
 		}
 		start := i + bracket
-		closeBracket := strings.IndexByte(body[start:], ']')
+		closeBracket := strings.IndexByte(scan[start:], ']')
 		if closeBracket == -1 {
 			break
 		}
 		textEnd := start + closeBracket
 		// Check for '(' immediately after ']'
-		if textEnd+1 >= len(body) || body[textEnd+1] != '(' {
+		if textEnd+1 >= len(scan) || scan[textEnd+1] != '(' {
 			i = textEnd + 1
 			continue
 		}
-		closeParen := strings.IndexByte(body[textEnd+2:], ')')
+		closeParen := strings.IndexByte(scan[textEnd+2:], ')')
 		if closeParen == -1 {
 			break
 		}
